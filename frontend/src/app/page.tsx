@@ -5,7 +5,6 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import BriefPanel from "@/components/BriefPanel";
 import DamageCanvas from "@/components/DamageCanvas";
-import Logo from "@/components/Logo";
 import ZoneTable from "@/components/ZoneTable";
 import ZoneMap from "@/components/ZoneMap";
 import {
@@ -603,7 +602,13 @@ export default function HomePage() {
         <header className="mb-4 border-b border-diq-line/60 pb-4">
           <div className="flex flex-col gap-5 2xl:flex-row 2xl:items-center 2xl:justify-between">
             <div className="flex shrink-0 items-center gap-4">
-              <Logo size={72} className="shrink-0" />
+              <img
+                src="/disasteriq-icon.png"
+                alt="DisasterIQ logo"
+                width={72}
+                height={72}
+                className="shrink-0 rounded-2xl bg-white shadow-lg shadow-black/20"
+              />
 
               <div>
                 <div className="flex items-baseline gap-1">
@@ -633,7 +638,7 @@ export default function HomePage() {
                   <span className="rounded bg-green-500 px-1.5 py-0.5 text-[10px] text-white">
                     C
                   </span>
-                  Pakistan Floods 2022
+                  xView2 / xBD (Global)
                 </p>
               </div>
 
