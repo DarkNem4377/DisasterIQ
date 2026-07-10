@@ -1,40 +1,36 @@
-# xView2 ML — DisasterIQ
+# xView2 ML — DisasterIQ (Team DarkNem)
 
-Building damage assessment from paired pre/post satellite imagery.
+Building damage assessment from pre/post satellite imagery.
 
 ## Framework decision
 
-| Path | Framework | Status |
-|------|-----------|--------|
-| Demo inference (baseline) | TF 1.15 in Docker (`darknem-xview2-inference`) | Works today, ~2 min/pair on CPU |
-| Fine-tuning | PyTorch + ROCm (`ml/pytorch-xview2`) | Needs an AMD GPU instance |
-| Fine-tuning TF 1.15 on ROCm | — | **Rejected**: no practical ROCm build of TF 1.15 exists |
+| Path | Framework | Use |
+|------|-----------|-----|
+| **Demo inference (baseline)** | TF 1.15 Docker (`darknem-xview2-inference`) | Ship now — ~2 min/pair on CPU |
+| **Fine-tuning** | **PyTorch + ROCm** (`ml/pytorch-xview2`) | AMD MI300 when GPU approved |
+| TF 1.15 fine-tune on ROCm | **Rejected** | No practical ROCm path for TF 1.15 |
 
-That last row is why fine-tuning runs against a PyTorch fork of xView2 rather
-than the TF baseline we serve for the demo. Don't spend GPU hours rediscovering it.
+CPU data prep is complete: `data/train/` (5598 masks) and `data/train_subset/` (~1449 pairs). See [docs/DATA.md](../docs/DATA.md).
 
 ## Inference modes
 
-Set `INFERENCE_MODE` in `.env`. The backend validates the value at startup and
-refuses to boot on a typo.
+| Mode | Behavior | When to use |
+|------|----------|-------------|
+| `stub` | GT copy for demo pairs, else pixel-diff heuristic | Fast rehearsed demo |
 
-| Mode | Behavior | Confidence? | When |
-|------|----------|-------------|------|
-| `stub` | Copies the xBD ground-truth target when the pair ships one (`stub-groundtruth`), otherwise a pre/post pixel-difference heuristic (`stub-heuristic`) | no | Fast, dependency-free demo |
-| `docker` | Official xView2 TF 1.15 baseline | no | Credibility, IoU baseline |
-| `pytorch` | Fine-tuned checkpoint via `ml/pytorch-inference/` | **yes** | After GPU training |
+**`stub-heuristic` limitation:** The pixel-diff fallback only labels *changed* regions as minor, major, or destroyed (classes 2–4). It cannot produce undamaged building pixels (class 1) — that requires ground-truth targets (`stub-groundtruth` on demo pairs) or a real model (`docker` / `pytorch`).
+| `docker` | Official xView2 TF 1.15 baseline | Credibility / IoU baseline |
+| `pytorch` | Fine-tuned checkpoint via `ml/pytorch-inference/` | After AMD GPU training |
 
-**`stub-heuristic` cannot produce class 1 (undamaged building).** It only labels
-*changed* pixels, as minor/major/destroyed. Undamaged buildings require ground
-truth (`stub-groundtruth`) or a real model. Read demo numbers accordingly.
+Set in `.env`:
 
-Only `pytorch` yields per-pixel class probabilities, so `zone.confidence` is
-null in every other mode. The baseline and the stub emit label masks with no
-probability behind them — reporting a number there would be inventing one.
+```
+INFERENCE_MODE=docker   # or stub | pytorch
+```
 
 ## TF baseline inference image
 
-Pretrained weights are downloaded during the image build:
+Pretrained weights download at image build time:
 
 - Localization: https://github.com/DIUx-xView/xView2/releases/download/v1.0/localization.h5
 - Classification: https://github.com/DIUx-xView/xView2/releases/download/v1.0/classification.hdf5
@@ -42,63 +38,76 @@ Pretrained weights are downloaded during the image build:
 ### Build
 
 ```powershell
-docker build -t darknem-xview2-inference -f ml/inference/Dockerfile ml/inference
-# or
 docker compose --profile build-ml build ml
+# or
+docker build -t darknem-xview2-inference -f ml/inference/Dockerfile ml/inference
 ```
 
-Needs ~8 GB RAM and 15–30 minutes on a first build.
+Requires ~8 GB RAM, stable network, ~15–30 min first build.
 
-### Run the API against it
+### Run backend with real ML
 
-Use the local venv, **not** `docker compose up backend`: the backend image has
-no Docker CLI inside it, so it cannot shell out to `docker run` per request.
+**Use local venv, not `docker compose up` backend**, when `INFERENCE_MODE=docker`:
 
 ```powershell
-# .env
+# In .env
 INFERENCE_MODE=docker
 
 .\scripts\start-backend.ps1
 ```
 
-### Test the container directly
+The containerized backend image does not include the Docker CLI. For hackathon demo, run the API from `start-backend.ps1` and invoke `docker run darknem-xview2-inference` per request.
+
+### Manual container test
 
 ```powershell
 docker run --rm `
-  -v ${PWD}\data\demo\images:/input:ro `
-  -v ${PWD}\backend\outputs\smoke:/output `
+  -v D:\AMD\data\demo\images:/submission `
+  -v D:\AMD\backend\app\outputs\smoke:/output `
   darknem-xview2-inference `
-  /input/demo_pre_disaster.png `
-  /input/demo_post_disaster.png `
+  /submission/mexico-earthquake_00000005_pre_disaster.png `
+  /submission/mexico-earthquake_00000005_post_disaster.png `
   /output/localization.png `
   /output/classification.png
 ```
 
-## PyTorch fine-tuning
+### Validate all demo pairs (CPU, ~30 min)
 
-Upstream (`michal2409/xView2`) is a gitignored clone, not vendored:
-
-```bash
-git clone https://github.com/michal2409/xView2 ml/pytorch-xview2
+```powershell
+cd backend
+$env:PYTHONUNBUFFERED = "1"
+..\.venv\Scripts\python.exe ..\scripts\validate_docker_pairs.py
 ```
+
+Last run (building IoU vs ground truth): earthquake pairs ~0.63–0.71, flood pairs ~0.37–0.76.
+
+## PyTorch fine-tuning (AMD GPU)
+
+Vendored repo: `ml/pytorch-xview2/` (gitignored clone of `michal2409/xView2`).
 
 | Artifact | Path |
 |----------|------|
-| Upstream compatibility patches | `ml/finetune/patch_pytorch_xview2.py` |
-| Loss override (MONAI 1.x) | `ml/finetune/overrides/model/loss.py` |
-| Hyperparameters | `ml/finetune/config_subset.yaml` |
-| Stage scripts | `ml/finetune/train_localization.sh`, `train_damage.sh` |
+| ROCm training image | `ml/pytorch-xview2/Dockerfile.rocm` |
+| Training scripts | `ml/finetune/train_localization.sh`, `train_damage.sh` |
 | Full pipeline | `ml/finetune/run_amd_pipeline.sh` |
-| Single-pair inference | `ml/pytorch-inference/infer_pair.py` |
-| Checkpoint destination | `ml/checkpoints/damage_best.ckpt` |
+| Config | `ml/finetune/config_subset.yaml` |
+| Inference script | `ml/pytorch-inference/infer_pair.py` |
+| Checkpoint (after train) | `ml/checkpoints/damage_best.ckpt` |
 
-Details in [ml/finetune/README.md](finetune/README.md).
+Full GPU runbook: [docs/AMD_FINETUNE_PLAN.md](../docs/AMD_FINETUNE_PLAN.md)
 
-## Tests
+### Compare models (IoU on demo pairs)
 
-The probability-to-confidence conversion is CPU-testable with no GPU, no
-checkpoint and no upstream clone:
+```powershell
+# TF baseline only (works now)
+.\backend\.venv\Scripts\python.exe scripts\compare_models.py --modes docker
 
-```bash
-python -m pytest ml/pytorch-inference/tests/ -v
+# After checkpoint copied from GPU
+.\backend\.venv\Scripts\python.exe scripts\compare_models.py --modes docker pytorch
 ```
+
+Report: `backend/app/outputs/model_compare/report.json`
+
+## Fine-tuning details
+
+See [ml/finetune/README.md](finetune/README.md).

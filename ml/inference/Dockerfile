@@ -17,28 +17,21 @@ RUN groupadd -g 999 appuser 2>/dev/null || true && \
 ADD https://github.com/fchollet/deep-learning-models/releases/download/v0.2/resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5 \
     /home/appuser/.keras/models/resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5
 
-RUN chmod -R 777 /home/appuser/
+RUN chown -R appuser:appuser /home/appuser/ && chmod -R u+rwX /home/appuser/
 
 USER appuser
 WORKDIR /home/appuser
 
 RUN mkdir -p ~/code/xview-2/ ~/submission/ ~/output/
 
-# Pin opencv-python to a version that ships a prebuilt cp36 manylinux wheel and
-# force pip to prefer binaries, so imgaug's opencv dependency is never compiled
-# from source (that source build takes 45+ min on limited CPU).
-# keras is pinned to 2.3.1, the last multi-backend release: keras 2.6+ imports
-# tf.__internal__ (a TF 2.x symbol) and crashes on this TF 1.15 base. 2.2.x also
-# works — its predict_generator already accepts the `callbacks` argument the
-# baseline's damage_inference.py passes — so this pin is a safe upper bound, not
-# a lower one. h5py<3 avoids the "'str' has no attribute 'decode'" error when
-# loading the old-format .h5 weights.
-RUN pip install --user --prefer-binary \
-    'opencv-python==4.5.5.64' 'keras==2.3.1' 'h5py<3' \
+# Use apt python3-opencv (no pip opencv — avoids 60+ min source compile)
+# Pin keras 2.2.5 for TensorFlow 1.15 compatibility
+RUN pip install --user \
     matplotlib tqdm libtiff scipy 'Pillow<10' scikit-image \
-    imgaug IPython imantics simplification scikit-learn chainer \
-    tensorboard tensorboardX && \
-    pip install --user 'geopandas<0.11' || pip install --user geopandas
+    IPython 'keras==2.2.5' simplification scikit-learn chainer \
+    tensorboard tensorboardX lxml xmljson Shapely && \
+    pip install --user --no-deps imantics imgaug && \
+    (pip install --user 'geopandas<0.11' || pip install --user geopandas)
 
 RUN git clone --depth 1 https://github.com/DIUx-xView/xview2-baseline.git ~/code/xview-2
 

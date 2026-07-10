@@ -1,78 +1,113 @@
-# Fine-tuning on an AMD ROCm GPU
+# Fine-tuning on AMD GPU — PyTorch path
 
-> **This does not fine-tune the TF 1.15 baseline.** TensorFlow 1.15 has no
-> practical ROCm build, so there is no path from the Docker baseline weights to
-> a fine-tuned model on AMD hardware. We fine-tune a PyTorch reimplementation
-> (`michal2409/xView2`) instead and serve it via `INFERENCE_MODE=pytorch`. The
-> TF baseline stays exactly as it is, for `INFERENCE_MODE=docker`.
+**Status:** Data prep complete on laptop. Training awaits AMD GPU access.
 
-## Prerequisites
+## What's ready (CPU, done)
 
-1. Train archive verified and extracted to `data/train/`.
-2. Subset filtered to the hazard types the demo shows:
-   ```bash
-   python scripts/prepare_train_subset.py --train-dir data/train --output-dir data/train_subset
-   ```
-3. An AMD GPU instance with ROCm, and a torch build that can see it:
-   ```bash
-   rocm-smi
-   python -c "import torch; print(torch.cuda.is_available())"
-   ```
-4. Upstream cloned (gitignored — never committed):
-   ```bash
-   git clone https://github.com/michal2409/xView2 ml/pytorch-xview2
-   ```
+| Step | Command | Result |
+|------|---------|--------|
+| Verify Kaggle archive | `.\scripts\verify-kaggle-archive.ps1` | `D:\archive.zip` OK |
+| Extract + flatten train | `.\scripts\extract-kaggle-archive.ps1` | `data/train/` flat layout |
+| Generate target masks | `python scripts\generate_train_targets.py` | 5598 PNG masks |
+| Build hackathon subset | `python scripts\prepare_train_subset.py ...` | ~1449 pairs in `data/train_subset/` |
+| Vendor PyTorch repo | `ml/pytorch-xview2/` | `michal2409/xView2` clone |
 
-## One command
+Counts (verified):
+
+```
+data/train/images   : 5598
+data/train/targets  : 5598
+data/train_subset/* : 2898 per folder (~1449 pairs)
+```
+
+## AMD GPU verification
 
 ```bash
+rocm-smi
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+If `False`, install ROCm PyTorch per AMD docs before training.
+
+## Training pipeline
+
+### CPU prep (before AMD GPU window)
+
+```powershell
+python ml\finetune\patch_pytorch_xview2.py
+python scripts\generate_subset_index.py --data-dir data\train_subset
+python scripts\test_pytorch_dataset.py --data-dir data\train_subset
+```
+
+`generate_subset_index.py` needs `opencv-python`, `pandas`, `joblib`, `tqdm` (same as xView2 training env).
+
+### Sync data to GPU instance
+
+```bash
+bash scripts/rsync_to_amd.sh root@YOUR_DROPLET_IP
+```
+
+### Run full pipeline
+
+```bash
+cd DisasterIQ
 bash ml/finetune/run_amd_pipeline.sh
 ```
 
-It patches upstream, regenerates `index.csv` for the subset, trains
-localization, trains damage from the localization checkpoint, then evaluates.
+Stages (after patch + index.csv inside `run_amd_pipeline.sh`):
+1. **Localization** (`--type pre`) — epochs/batch from `config_subset.yaml`
+2. **Damage** (`--type post`, siamese) — loads loc checkpoint
+3. **Eval** on `data/test/`
 
-## What each piece does
+Hyperparameters: `ml/finetune/config_subset.yaml` via `load_config.py` (`pip install pyyaml`)
 
-| File | Role |
-|------|------|
-| `config_subset.yaml` | Every hyperparameter. Nothing is hardcoded in the shell scripts. |
-| `load_config.py` | Turns the YAML into `export` statements. Variables already set in the environment win, so `EPOCHS=1 bash train_damage.sh` works. |
-| `patch_pytorch_xview2.py` | Ports the 2020 upstream to torch 2.x / PyTorch Lightning 1.9 / Python 3.11. Idempotent, and raises rather than silently no-opping if upstream moved. |
-| `overrides/model/loss.py` | Upstream flattens damage pixels to `[N, C]`, which MONAI 1.x losses reject. Pure-PyTorch focal/dice on that path, MONAI on the spatial localization path. |
-| `train_localization.sh` | Stage 1: segment buildings from the pre-disaster image. |
-| `train_damage.sh` | Stage 2: siamese damage head, warm-started from stage 1. Refuses to run without that checkpoint. |
-| `run_amd_pipeline.sh` | Both stages plus eval, in order. |
-
-The pipeline is staged because the damage model initializes from the
-localization weights (`ckpt_pre`). Training stage 2 from scratch runs fine and
-quietly produces a much worse model, so `train_damage.sh` hard-fails instead.
-
-Set `PYTHON=/path/to/python` if the image exposes `python` but not `python3`.
-
-## Why the index has to be regenerated
-
-The upstream loader maps a numeric `idx` to a tile by position in the sorted
-image list, and ships an `index.csv` built against the full ~8k-pair train set.
-Point it at a filtered subset without regenerating and it silently reads the
-wrong tiles. `scripts/generate_subset_index.py` renumbers against whatever is
-actually in `--data-dir`; `run_amd_pipeline.sh` calls it for you.
-
-## Verify without a GPU
+### ROCm Docker alternative
 
 ```bash
-python ml/finetune/patch_pytorch_xview2.py --check    # do the patched files compile?
-python -m pytest backend/tests/test_finetune_config.py -v
-python -m pytest ml/pytorch-inference/tests/ -v
+cd ml/pytorch-xview2
+docker build -f Dockerfile.rocm -t darknem-xview2-train .
+docker run --rm --device=/dev/kfd --device=/dev/dri \
+  -v /data/train_subset:/data/train_subset \
+  -v /data/test:/data/test \
+  -v /results:/results \
+  darknem-xview2-train \
+  bash -c "cd /workspace/xview2 && bash ../finetune/run_amd_pipeline.sh"
 ```
 
-## After training
+**Time box:** 4–6 hours. Stop and ship TF baseline if not converging.
 
-```bash
-cp /results/dmg/checkpoints/best.ckpt ml/checkpoints/damage_best.ckpt
+## Kaggle GPU (no AMD access)
+
+See [docs/KAGGLE_FINETUNE.md](../../docs/KAGGLE_FINETUNE.md) and `notebooks/kaggle_finetune.ipynb` for CUDA fine-tuning on Kaggle using pre-built `train_subset`.
+
+```powershell
+.\scripts\zip_train_subset.ps1
+# Upload zip to Kaggle → run notebook with GPU enabled
 ```
 
-Then set `INFERENCE_MODE=pytorch` in `.env`. See [../checkpoints/README.md](../checkpoints/README.md).
+Config: `ml/finetune/config_subset_kaggle.yaml` (5+8 epochs). Entrypoint: `python ml/finetune/kaggle_train.py --stage all` (or legacy `run_kaggle_pipeline.sh`).
 
-If the GPU never materializes, ship with `INFERENCE_MODE=docker` — those
-baseline weights are real, pretrained, and already working.
+## Integrating checkpoint
+
+After training, copy best damage checkpoint:
+
+```
+/results/dmg/checkpoints/best.ckpt  →  ml/checkpoints/damage_best.ckpt
+```
+
+`.env`:
+
+```
+INFERENCE_MODE=pytorch
+PYTORCH_CHECKPOINT_PATH=ml/checkpoints/damage_best.ckpt
+```
+
+Restart backend. Compare IoU:
+
+```powershell
+.\backend\.venv\Scripts\python.exe scripts\compare_models.py --modes docker pytorch
+```
+
+## Do not attempt
+
+- TF 1.15 / Keras 2.2.5 training on ROCm — no practical path in hackathon window

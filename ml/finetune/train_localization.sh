@@ -1,35 +1,32 @@
 #!/usr/bin/env bash
-# Stage 1: learn building segmentation from pre-disaster imagery.
-# Hyperparameters come from config_subset.yaml; any exported env var wins.
+# Stage 1: building localization on hackathon train subset
 set -euo pipefail
+FINETUNE_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$FINETUNE_DIR/../pytorch-xview2"
 
-# ROCm and Kaggle images disagree on whether the interpreter is python3 or python.
-PYTHON="${PYTHON:-python3}"
-
-FINETUNE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-XVIEW2_ROOT="${XVIEW2_ROOT:-$FINETUNE_DIR/../pytorch-xview2}"
-
-if [[ ! -f "$XVIEW2_ROOT/main.py" ]]; then
-  echo "error: no xView2 checkout at $XVIEW2_ROOT" >&2
-  echo "       git clone https://github.com/michal2409/xView2 ml/pytorch-xview2" >&2
-  exit 1
+CONFIG_ARGS=()
+if [[ -n "${FINETUNE_CONFIG:-}" ]]; then
+  CONFIG_ARGS=(--config "$FINETUNE_CONFIG")
 fi
+eval "$(python3 "$FINETUNE_DIR/load_config.py" "${CONFIG_ARGS[@]}" localization)"
 
-eval "$("$PYTHON" "$FINETUNE_DIR/load_config.py" localization)"
-eval "$("$PYTHON" "$FINETUNE_DIR/load_config.py" data)"
+DATA_DIR="${DATA_DIR:-/data/train_subset}"
+RESULTS_DIR="${RESULTS_DIR:-/results/loc}"
 
-RESULTS_DIR="${RESULTS_DIR:?load_config must export RESULTS_DIR}"
-mkdir -p "$RESULTS_DIR"
+mkdir -p "$RESULTS_DIR/checkpoints"
 
-cd "$XVIEW2_ROOT"
-exec "$PYTHON" main.py \
+python main.py \
   --exec_mode train \
   --type pre \
-  --encoder "$ENCODER" \
-  --loss_str "$LOSS_STR" \
-  --epochs "$EPOCHS" \
-  --batch_size "$BATCH_SIZE" \
-  --val_batch_size "$VAL_BATCH_SIZE" \
-  --gpus "$GPUS" \
   --data "$DATA_DIR" \
-  --results "$RESULTS_DIR"
+  --results "$RESULTS_DIR" \
+  --encoder "$ENCODER" \
+  --loss_str ce+dice \
+  --deep_supervision \
+  --gpus 1 \
+  --num_workers "${NUM_WORKERS:-4}" \
+  --batch_size "$BATCH_SIZE" \
+  --val_batch_size "$BATCH_SIZE" \
+  --epochs "$EPOCHS"
+
+echo "Localization training done -> $RESULTS_DIR"

@@ -216,7 +216,8 @@ the official source:
 - 🔗 **Official dataset:** [xview2.org](https://xview2.org) — free registration required
 - The download provides the pre/post image pairs plus labels and target masks
 
-This repo already ships **one demo pair** (`data/demo/images/`) so the app runs
+This repo already ships **ten curated demo pairs** (`data/demo/images/`, with
+matching xBD labels and ground-truth target masks) so the app runs
 end-to-end out of the box, no download needed.
 
 ### Curate demo pairs from the full dataset

@@ -12,6 +12,8 @@ import argparse
 import shutil
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 KEEP_PREFIXES = (
     "mexico-earthquake",
     "midwest-flooding",
@@ -24,7 +26,7 @@ KEEP_PREFIXES = (
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--train-dir", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, default=Path("data/train_subset"))
+    parser.add_argument("--output-dir", type=Path, default=REPO_ROOT / "data" / "train_subset")
     args = parser.parse_args()
 
     xbd_root = args.train_dir
@@ -47,7 +49,7 @@ def main() -> None:
     out = args.output_dir
     out.mkdir(parents=True, exist_ok=True)
     for d in xbd_root.iterdir():
-        if d.is_dir() and any(d.name.startswith(p.split("_")[0]) or d.name == p for p in KEEP_PREFIXES):
+        if d.is_dir() and any(d.name.startswith(p) or d.name == p for p in KEEP_PREFIXES):
             dest = out / d.name
             if dest.exists():
                 shutil.rmtree(dest)
