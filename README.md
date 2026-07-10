@@ -216,7 +216,7 @@ the official source:
 - 🔗 **Official dataset:** [xview2.org](https://xview2.org) — free registration required
 - The download provides the pre/post image pairs plus labels and target masks
 
-This repo already ships **one demo pair** (`backend/uploads/`) so the app runs
+This repo already ships **one demo pair** (`data/demo/images/`) so the app runs
 end-to-end out of the box, no download needed.
 
 ### Curate demo pairs from the full dataset
@@ -229,12 +229,48 @@ After downloading and extracting the test archive to `data/test/`:
 
 This copies the pairs listed in `data/demo/manifest.json` into `data/demo/`.
 
+### Inference modes
+
+The backend picks its damage model from `INFERENCE_MODE` in `.env`:
+
+| Mode | What it runs | Per-zone confidence |
+|---|---|---|
+| `stub` | Ground-truth target when the demo pair ships one, otherwise a pre/post pixel-difference heuristic | — |
+| `docker` | The official xView2 TF 1.15 baseline, in a container | — |
+| `pytorch` | A fine-tuned checkpoint (`ml/checkpoints/damage_best.ckpt`) | ✅ |
+
+Only `pytorch` produces class probabilities, so `confidence` is reported for
+that mode alone. See [`ml/README.md`](ml/README.md) for details.
+
 ### Fine-tuning
 
-To fine-tune the damage model on AMD GPUs (ROCm), see
-[`ml/finetune/README.md`](ml/finetune/README.md) for the full pipeline —
-extract the train archive, filter to the target hazard types with
-`scripts/prepare_train_subset.py`, then run the xView2 training workflow.
+Fine-tuning runs on a **PyTorch** fork of xView2, not the TF 1.15 baseline —
+TensorFlow 1.15 has no practical ROCm build. Extract the train archive, filter
+to the target hazard types with `scripts/prepare_train_subset.py`, then:
+
+```bash
+bash ml/finetune/run_amd_pipeline.sh
+```
+
+Full runbook in [`ml/finetune/README.md`](ml/finetune/README.md).
+
+---
+
+## 🧪 Development
+
+```powershell
+# Backend tests
+cd backend; .\.venv\Scripts\python.exe -m pytest tests/ -v
+
+# ML inference tests (CPU only — no GPU or checkpoint needed)
+python -m pytest ml/pytorch-inference/tests/ -v
+
+# Frontend
+cd frontend; npm run typecheck; npm run build
+```
+
+CI runs all of the above on every push and pull request
+(see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
 ---
 
@@ -287,6 +323,8 @@ DisasterIQ currently supports:
 - ✅ AI-style situation brief generation
 - ✅ PDF field report export
 - ✅ Frontend and backend integration
+- ✅ Optional API key and per-IP rate limiting on the expensive endpoints
+- ✅ Automated test suite and CI (backend, ML, frontend)
 
 ---
 
