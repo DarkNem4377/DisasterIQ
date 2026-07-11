@@ -59,6 +59,7 @@ _LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "disasteriq-ico
 _PAGE_W, _PAGE_H = LETTER
 _MARGIN = 40
 _CONTENT_W = _PAGE_W - 2 * _MARGIN
+_PANEL_PAD = 14  # horizontal padding inside bordered panels
 
 
 # --- Small helpers -------------------------------------------------------------
@@ -476,7 +477,10 @@ def _zone_grid(zones: list[Zone], tiers: dict[int, str]) -> Table:
     if not cells:
         cells = [[""] * GRID_COLS]
 
-    inner_w = _CONTENT_W - 0.7 * inch
+    # The grid + compass sit inside a panel that has 14pt of horizontal padding
+    # on each side, so the available width is _CONTENT_W minus that padding.
+    compass_w = 0.7 * inch
+    inner_w = _CONTENT_W - 2 * _PANEL_PAD - compass_w
     grid = Table(
         cells,
         colWidths=[inner_w / GRID_COLS] * GRID_COLS,
@@ -492,7 +496,7 @@ def _zone_grid(zones: list[Zone], tiers: dict[int, str]) -> Table:
     )
     grid.setStyle(TableStyle(grid_style))
 
-    body = Table([[_Compass(), grid]], colWidths=[0.7 * inch, inner_w])
+    body = Table([[_Compass(), grid]], colWidths=[compass_w, inner_w])
     body.setStyle(
         TableStyle(
             [
@@ -513,8 +517,8 @@ def _zone_grid(zones: list[Zone], tiers: dict[int, str]) -> Table:
             [
                 ("BACKGROUND", (0, 0), (-1, -1), HexColor("#F8FAFC")),
                 ("BOX", (0, 0), (-1, -1), 0.6, LINE),
-                ("LEFTPADDING", (0, 0), (-1, -1), 14),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+                ("LEFTPADDING", (0, 0), (-1, -1), _PANEL_PAD),
+                ("RIGHTPADDING", (0, 0), (-1, -1), _PANEL_PAD),
                 ("TOPPADDING", (0, 0), (0, 0), 14),
                 ("BOTTOMPADDING", (0, 1), (0, 1), 8),
                 ("TOPPADDING", (0, 1), (0, 1), 0),
