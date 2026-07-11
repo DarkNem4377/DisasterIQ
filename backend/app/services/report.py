@@ -264,6 +264,15 @@ _SMALL = ParagraphStyle(
 _LABEL = ParagraphStyle(
     "Label", fontName="Helvetica-Bold", fontSize=7.5, textColor=MUTED, leading=10,
 )
+_STAT_LABEL = ParagraphStyle(
+    "StatLabel", fontName="Helvetica-Bold", fontSize=7.5, textColor=MUTED, leading=9,
+)
+_STAT_VALUE = ParagraphStyle(
+    "StatValue", fontName="Helvetica-Bold", fontSize=21, textColor=NAVY, leading=22,
+)
+_ASSESS_VALUE = ParagraphStyle(
+    "AssessValue", fontName="Helvetica-Bold", fontSize=17, textColor=NAVY, leading=20,
+)
 
 
 def _cell(html: str, style: ParagraphStyle = _BODY) -> Paragraph:
@@ -301,12 +310,12 @@ def _status_strip() -> Table:
 
 
 def _stat_cards(summary) -> Table:
-    def card(label: str, value: str, color: HexColor) -> Paragraph:
-        return _cell(
-            f'<font size=7.5 color="#64748B"><b>{label}</b></font><br/>'
-            f'<font size=21 color="{_hex(color)}"><b>{value}</b></font>',
-            _BODY,
-        )
+    def card(label: str, value: str, color: HexColor) -> list:
+        return [
+            Paragraph(label, _STAT_LABEL),
+            Spacer(1, 4),
+            Paragraph(f'<font color="{_hex(color)}">{value}</font>', _STAT_VALUE),
+        ]
 
     dest_color = RED if summary.destroyed_pct > 0 else NAVY
     major_color = ORANGE if summary.major_pct > 0 else NAVY
@@ -327,9 +336,10 @@ def _stat_cards(summary) -> Table:
                 ("BOX", (0, 0), (-1, -1), 0.6, LINE),
                 ("INNERGRID", (0, 0), (-1, -1), 0.6, LINE),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 12),
-                ("TOPPADDING", (0, 0), (-1, -1), 7),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+                ("LEFTPADDING", (0, 0), (-1, -1), 14),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 11),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 11),
             ]
         )
     )
@@ -338,11 +348,11 @@ def _stat_cards(summary) -> Table:
 
 def _assessment_and_legend(label: str, tier: str) -> Table:
     main = TIER[tier]["main"]
-    left = _cell(
-        '<font size=7.5 color="#64748B"><b>OVERALL ASSESSMENT</b></font><br/><br/>'
-        f'<font size=17 color="{_hex(main)}"><b>{label}</b></font>',
-        _BODY,
-    )
+    left = [
+        Paragraph("OVERALL ASSESSMENT", _STAT_LABEL),
+        Spacer(1, 10),
+        Paragraph(f'<font color="{_hex(main)}">{label}</font>', _ASSESS_VALUE),
+    ]
 
     def legend_row(color: HexColor, name: str, desc: str):
         badge = _cell(f'<font color="#FFFFFF"><b>{name}</b></font>', _LABEL)
