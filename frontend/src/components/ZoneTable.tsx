@@ -2,6 +2,7 @@
 
 "use client";
 
+import { useState } from "react";
 import type { AnalysisResult } from "@/lib/api";
 
 interface Props {
@@ -59,8 +60,21 @@ function EmptyPriorityZones() {
   );
 }
 
-function getPriorityMeta(rank: number) {
-  if (rank === 1) {
+type PriorityLevel = "high" | "medium" | "low";
+
+/*
+  Bucket a zone's real 0-100 priority_score (from the backend scoring service)
+  into a response tier. A destroyed/major-dominant zone lands in High, a zone
+  with lighter damage in Medium, and a low- or no-damage zone in Low.
+*/
+function getPriorityLevel(score: number): PriorityLevel {
+  if (score >= 50) return "high";
+  if (score >= 20) return "medium";
+  return "low";
+}
+
+function getPriorityMeta(level: PriorityLevel) {
+  if (level === "high") {
     return {
       label: "High",
       badge: "border-red-500/50 bg-red-500 text-slate-950 shadow-red-950/30",
@@ -71,19 +85,7 @@ function getPriorityMeta(rank: number) {
     };
   }
 
-  if (rank === 2) {
-    return {
-      label: "High",
-      badge:
-        "border-orange-500/50 bg-orange-500 text-slate-950 shadow-orange-950/30",
-      rankBox: "bg-orange-500 text-white",
-      zoneText: "text-orange-300",
-      row: "bg-orange-950/15 hover:bg-orange-950/25",
-      line: "bg-orange-500/60",
-    };
-  }
-
-  if (rank === 3) {
+  if (level === "medium") {
     return {
       label: "Medium",
       badge:
@@ -106,31 +108,19 @@ function getPriorityMeta(rank: number) {
   };
 }
 
-function getZoneName(rank: number) {
-  /*
-    The current backend zones are ranked but do not expose a named zone_id
-    in the existing frontend type. This gives the UI the same "Zone 3 / Zone 5"
-    feel as the mockup while staying deterministic.
-  */
-  const demoZoneNames = [
-    "Zone 3",
-    "Zone 5",
-    "Zone 8",
-    "Zone 2",
-    "Zone 6",
-    "Zone 1",
-  ];
-  return demoZoneNames[rank - 1] ?? `Zone ${rank}`;
-}
+const COLLAPSED_COUNT = 6;
 
 export default function ZoneTable({ analysis }: Props) {
+  const [showAll, setShowAll] = useState(false);
+
   if (!analysis) {
     return <EmptyPriorityZones />;
   }
 
-  const topZones = [...analysis.zones]
-    .sort((a, b) => a.rank - b.rank)
-    .slice(0, 6);
+  const rankedZones = [...analysis.zones].sort((a, b) => a.rank - b.rank);
+  const hasMore = rankedZones.length > COLLAPSED_COUNT;
+  const displayZones =
+    showAll || !hasMore ? rankedZones : rankedZones.slice(0, COLLAPSED_COUNT);
 
   return (
     <div className="rounded-xl border border-blue-500/35 bg-diq-panel/55 shadow-2xl shadow-black/20">
@@ -141,7 +131,7 @@ export default function ZoneTable({ analysis }: Props) {
           </h3>
 
           <span className="rounded border border-diq-orange/40 bg-diq-orange/10 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-diq-orange">
-            {topZones.length} zones
+            {rankedZones.length} zones
           </span>
         </div>
       </div>
@@ -154,17 +144,20 @@ export default function ZoneTable({ analysis }: Props) {
             <span className="text-right">Priority</span>
           </div>
 
-          <div className="divide-y divide-diq-line/40">
-            {topZones.map((zone) => {
-              const meta = getPriorityMeta(zone.rank);
+          <div
+            className={`divide-y divide-diq-line/40 ${
+              showAll && hasMore ? "max-h-[360px] overflow-y-auto" : ""
+            }`}
+          >
+            {displayZones.map((zone) => {
+              const meta = getPriorityMeta(getPriorityLevel(zone.priority_score));
               const destroyed = zone.building_counts.destroyed;
               const major = zone.building_counts.major;
               const damagedBuildings = destroyed + major;
-              const zoneName = getZoneName(zone.rank);
 
               return (
                 <article
-                  key={`${zone.rank}-${zoneName}`}
+                  key={zone.rank}
                   className={`grid grid-cols-[60px_1fr_92px] items-center gap-3 px-3 py-3 transition ${meta.row}`}
                 >
                   <div className="flex items-center gap-3">
@@ -180,7 +173,7 @@ export default function ZoneTable({ analysis }: Props) {
                       <h4
                         className={`truncate text-sm font-black ${meta.zoneText}`}
                       >
-                        {zoneName}
+                        Zone {zone.rank}
                       </h4>
 
                       <span className="text-lg font-black leading-none text-white">
@@ -197,10 +190,7 @@ export default function ZoneTable({ analysis }: Props) {
                         <div
                           className={`h-full rounded-full ${meta.line}`}
                           style={{
-                            width: `${Math.min(
-                              100,
-                              Math.max(12, damagedBuildings),
-                            )}%`,
+                            width: `${Math.min(100, Math.max(0, zone.priority_score))}%`,
                           }}
                         />
                       </div>
@@ -220,16 +210,22 @@ export default function ZoneTable({ analysis }: Props) {
           </div>
         </div>
 
-        <button
-          type="button"
-          className="mt-4 w-full rounded-lg border border-blue-500/30 bg-blue-950/20 px-3 py-2 text-sm font-semibold text-blue-300 transition hover:border-blue-400/60 hover:bg-blue-950/35"
-        >
-          View all zones →
-        </button>
+        {hasMore && (
+          <button
+            type="button"
+            onClick={() => setShowAll((v) => !v)}
+            className="mt-4 w-full rounded-lg border border-blue-500/30 bg-blue-950/20 px-3 py-2 text-sm font-semibold text-blue-300 transition hover:border-blue-400/60 hover:bg-blue-950/35"
+          >
+            {showAll
+              ? "Show top zones ↑"
+              : `View all ${rankedZones.length} zones →`}
+          </button>
+        )}
 
         <p className="mt-3 text-[11px] leading-5 text-slate-500">
-          Building counts are estimated via connected-component analysis of
-          the damage mask, not verified per-building IDs.
+          Priority reflects each zone&apos;s 0-100 severity score; building
+          counts are estimated via connected-component analysis of the damage
+          mask, not verified per-building IDs.
         </p>
       </div>
     </div>
