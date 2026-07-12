@@ -1,4 +1,7 @@
 .env
+# Next.js reads .env.local for machine-local overrides (e.g. pointing the dev
+# frontend at the deployed backend). Never commit them.
+.env*.local
 .venv/
 venv/
 __pycache__/
