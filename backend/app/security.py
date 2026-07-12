@@ -14,6 +14,7 @@ distributed limit, back this with Redis instead.
 
 from __future__ import annotations
 
+import secrets
 import time
 from collections import defaultdict, deque
 from threading import Lock
@@ -24,6 +25,18 @@ from app.config import settings
 
 _hits: dict[str, deque[float]] = defaultdict(deque)
 _lock = Lock()
+
+
+def _evict_idle(cutoff: float) -> None:
+    """Drop IPs whose window has fully expired.
+
+    Without this the map keeps one entry per IP ever seen, so a long-running
+    deployment leaks memory in proportion to unique visitors rather than to
+    active ones.
+    """
+    idle = [ip for ip, hits in _hits.items() if not hits or hits[-1] < cutoff]
+    for ip in idle:
+        del _hits[ip]
 
 
 def rate_limit(request: Request) -> None:
@@ -37,6 +50,8 @@ def rate_limit(request: Request) -> None:
     cutoff = now - window
 
     with _lock:
+        _evict_idle(cutoff)
+
         hits = _hits[ip]
         while hits and hits[0] < cutoff:
             hits.popleft()
@@ -54,5 +69,7 @@ def require_access_token(x_api_key: str | None = Header(default=None)) -> None:
     expected = settings.access_token
     if not expected:
         return
-    if x_api_key != expected:
+    # compare_digest keeps the check constant-time, so a wrong key cannot be
+    # recovered byte by byte from response timing.
+    if x_api_key is None or not secrets.compare_digest(x_api_key, expected):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
