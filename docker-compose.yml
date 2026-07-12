@@ -10,6 +10,11 @@ services:
       - ./data/demo:/app/data/demo:ro
       - ./backend/app/uploads:/app/app/uploads
       - ./backend/app/outputs:/app/app/outputs
+      # Only INFERENCE_MODE=docker needs this: the backend shells out to `docker
+      # run` for the xView2 baseline. Mounting the host socket grants the
+      # container root-equivalent control of the host, so drop this line for any
+      # deployment that is not running docker-mode inference locally. The
+      # deployed backend (Render) runs stub mode and never mounts it.
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - DEMO_DATA_DIR=/app/data/demo
