@@ -98,15 +98,25 @@ export default function ZoneMapInner({ analysis, postImageUrl }: Props) {
     img.src = postImageUrl;
   }, [imageMode, postImageUrl, analysis.image_size]);
 
-  const geoZones = useMemo(
-    () =>
-      analysis.zones.filter(
-        (zone): zone is GeoZone =>
+  const geoZones = useMemo(() => {
+    return analysis.zones
+      .map((zone) => {
+        if (
           typeof zone.centroid_lat === "number" &&
-          typeof zone.centroid_lng === "number",
-      ),
-    [analysis.zones],
-  );
+          typeof zone.centroid_lng === "number"
+        ) {
+          return zone as GeoZone;
+        }
+        const [x = 0, y = 0, w = 0, h = 0] = zone.bbox ?? [];
+        if (!w && !h) return null;
+        return {
+          ...zone,
+          centroid_lat: y + h / 2,
+          centroid_lng: x + w / 2,
+        } as GeoZone;
+      })
+      .filter((z): z is GeoZone => z != null);
+  }, [analysis.zones]);
 
   const imageBounds = useMemo(() => {
     if (!imageMode) return null;
