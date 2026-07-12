@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import platform
 import re
 import shutil
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import anyio
+import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
@@ -30,6 +33,12 @@ from app.services.narrator import generate_brief
 from app.services.report import generate_report_pdf
 from app.services.scoring import score_mask
 
+# Log through uvicorn's own logger: a bare module logger inherits the root's
+# WARNING level under uvicorn, which would silently swallow the keep-alive
+# startup line — the one line that tells you, from the deploy logs, whether the
+# instance is actually holding itself open.
+logger = logging.getLogger("uvicorn.error")
+
 _SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
 # Keep uploads small enough for free-tier CPU hosts; clients should pre-check.
@@ -38,6 +47,27 @@ MAX_IMAGE_PIXELS = 40_000_000  # ~6327x6327
 ALLOWED_IMAGE_TYPES = frozenset(
     {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/tiff"}
 )
+
+async def _keep_awake(url: str, interval_seconds: int) -> None:
+    """Hold the instance open by sending it traffic from the inside.
+
+    A free-tier host spins the container down after ~15 minutes with no inbound
+    requests. The idle timer is watched at the platform's router, so a request
+    the container makes to its *own public URL* re-enters through that router
+    and resets it — which a purely internal loop would not do.
+
+    Ping "/" rather than "/health": it touches no filesystem, so the keep-alive
+    stays cheap. Failures are expected and survivable (a redeploy, a blip); the
+    only wrong move is letting one kill the task, so keep looping.
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                await client.get(f"{url}/", headers={"User-Agent": "disasteriq-keepalive"})
+            except httpx.HTTPError as exc:
+                logger.warning("keep-alive ping failed (will retry): %s", exc)
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -48,7 +78,25 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     decides whether the dashboard says "online" — while the box is still cold.
     """
     await anyio.to_thread.run_sync(list_demo_pairs)
-    yield
+
+    pinger: asyncio.Task | None = None
+    if settings.keep_alive and settings.keep_alive_url:
+        logger.info(
+            "keep-alive: pinging %s every %ss to prevent idle spin-down",
+            settings.keep_alive_url,
+            settings.keep_alive_interval_seconds,
+        )
+        pinger = asyncio.create_task(
+            _keep_awake(settings.keep_alive_url, settings.keep_alive_interval_seconds)
+        )
+
+    try:
+        yield
+    finally:
+        if pinger is not None:
+            pinger.cancel()
+            with suppress(asyncio.CancelledError):
+                await pinger
 
 
 app = FastAPI(

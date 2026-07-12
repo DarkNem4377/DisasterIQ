@@ -395,7 +395,25 @@ function PipelineStatus({
   );
 }
 
+/*
+  A cold start can run past any figure we quote, and a spinner that just says
+  "waking" with nothing moving reads as hung — so count the wait out loud. The
+  elapsed seconds are the difference between "it's working on it" and "it's
+  broken"; this component is only mounted while connecting, so mount time is
+  the start of the wait.
+*/
 function BackendConnectingNotice() {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const startedAt = Date.now();
+    const id = setInterval(
+      () => setElapsed(Math.round((Date.now() - startedAt) / 1000)),
+      1_000,
+    );
+    return () => clearInterval(id);
+  }, []);
+
   return (
     <div className="rounded-xl border border-blue-500/30 bg-blue-950/15 px-3 py-2.5">
       <div className="flex items-start gap-2.5">
@@ -403,11 +421,12 @@ function BackendConnectingNotice() {
 
         <div>
           <p className="text-xs font-black uppercase tracking-[0.12em] text-blue-200">
-            Waking backend
+            Waking backend · {elapsed}s
           </p>
           <p className="mt-1 text-[11px] leading-5 text-blue-100/60">
-            The server sleeps when idle. First load can take up to a minute —
-            demo pairs will appear automatically.
+            The free-tier server sleeps when idle and a cold start takes up to
+            two minutes. This page keeps retrying on its own — demo pairs appear
+            the moment it answers, with no refresh needed.
           </p>
         </div>
       </div>
@@ -865,6 +884,23 @@ export default function HomePage() {
 
   const canAnalyze = Boolean((preFile && postFile) || selectedPair);
 
+  /*
+    A disabled button explains nothing: hovering it just shows a "blocked" cursor,
+    which reads as the app refusing to work rather than as the backend still
+    booting. Demo pairs come from the backend, so during a cold start there is
+    nothing to select and Load Demo Pair is necessarily dead — say so, on the
+    button and in its tooltip, instead of leaving the user to guess.
+  */
+  const loadPairBlockedReason: string | null = loading
+    ? "An analysis is running. Wait for it to finish."
+    : pairs.length === 0
+      ? connecting
+        ? "Waking the backend. Demo pairs load by themselves — no refresh needed."
+        : "The backend is unreachable, so no demo pairs could be loaded."
+      : !selectedPair
+        ? "Choose a demo pair from the list first."
+        : null;
+
   return (
     <main className="min-h-screen bg-diq-bg text-slate-100 diq-grid-bg">
       <div className="mx-auto max-w-[1920px] px-4 py-4">
@@ -1057,11 +1093,19 @@ export default function HomePage() {
                 <button
                   type="button"
                   onClick={loadDemoPair}
-                  disabled={loading || !selectedPair}
+                  disabled={loadPairBlockedReason !== null}
+                  title={loadPairBlockedReason ?? "Load the selected before/after pair"}
                   className="w-full rounded-xl border border-blue-500/35 bg-blue-950/30 px-4 py-3 text-sm font-bold text-slate-100 transition hover:border-blue-400/70 hover:bg-blue-900/30 disabled:cursor-not-allowed disabled:opacity-45"
                 >
-                  ▣ Load Demo Pair
+                  {pairs.length === 0 && connecting
+                    ? "▣ Waiting for demo pairs…"
+                    : "▣ Load Demo Pair"}
                 </button>
+                {loadPairBlockedReason && (
+                  <p className="text-[11px] leading-5 text-slate-400">
+                    {loadPairBlockedReason}
+                  </p>
+                )}
 
                 <button
                   type="button"
@@ -1101,10 +1145,19 @@ export default function HomePage() {
                   </div>
 
                   {preUrl ? (
+                    /*
+                      object-contain, not object-cover: the After panel contains
+                      its image (DamageCanvas maps zone boxes onto that exact
+                      letterboxed rect, so it cannot cover). Covering here would
+                      crop and rescale Before independently, and the two panels
+                      would show the same ground at different scales — the one
+                      thing a before/after comparison must never do. Same fit on
+                      both sides keeps every pixel aligned across the split.
+                    */
                     <img
                       src={preUrl}
                       alt="Before disaster satellite imagery"
-                      className="h-full min-h-[720px] w-full object-cover"
+                      className="absolute inset-0 h-full w-full object-contain"
                     />
                   ) : (
                     <EmptyImageState />

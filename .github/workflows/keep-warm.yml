@@ -1,17 +1,21 @@
-# Keeps the Render free-tier backend from spinning down.
+# Backup pinger for the Render free-tier backend.
 #
-# A free instance sleeps after ~15 minutes of inactivity, and the next visitor
-# pays a cold start of a minute or more — during which the dashboard can only
-# report the backend as unreachable. Pinging inside that idle window keeps the
-# container resident, so the first real visitor lands on a warm API.
+# The primary defence lives in the backend itself (KEEP_ALIVE in render.yaml):
+# the instance pings its own public URL every 10 minutes, which does not depend
+# on GitHub running anything on time. This workflow is the belt to that braces —
+# it covers the case where the app is down or the self-ping is switched off.
 #
-# GitHub throttles scheduled runs on busy repos, hence 10 minutes rather than 14:
-# a skipped tick still leaves room before the instance sleeps.
+# Do not rely on this alone. GitHub's scheduled runs are best-effort: ticks are
+# routinely delayed or dropped under load, and the schedule is disabled outright
+# after 60 days of repository inactivity. Either gap is longer than the ~15
+# minutes of idle time it takes Render to spin a free instance down, which is
+# exactly how a visitor ends up staring at a cold start. Hence */5: it buys two
+# chances inside the idle window instead of one.
 name: Keep backend warm
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:

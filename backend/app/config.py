@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from pydantic import Field, model_validator
@@ -62,6 +63,21 @@ class Settings(BaseSettings):
     # When true, /docs and /redoc are disabled (recommended for public deploys).
     disable_openapi_docs: bool = False
 
+    # Free hosting tiers spin the container down after ~15 minutes without
+    # inbound traffic, and the next visitor pays a cold start (a minute or more)
+    # during which the dashboard can only report the backend as unreachable.
+    # The instance therefore pings its own public URL on a timer: the request
+    # leaves the container and re-enters through the platform's router, which is
+    # what the idle timer actually watches, so the container stays resident.
+    #
+    # keep_alive_url is normally left empty — Render injects RENDER_EXTERNAL_URL
+    # and we use that, so a local or Docker run (no such variable) simply never
+    # starts the pinger. Set KEEP_ALIVE=false to let the instance sleep again.
+    keep_alive: bool = True
+    keep_alive_url: str = ""
+    # Must stay comfortably under the platform's idle window (15 min on Render).
+    keep_alive_interval_seconds: int = Field(default=600, gt=0)
+
     @model_validator(mode="after")
     def _resolve_relative_paths(self) -> "Settings":
         self.demo_data_dir = _resolve_against_repo_root(self.demo_data_dir)
@@ -69,6 +85,19 @@ class Settings(BaseSettings):
         self.pytorch_checkpoint_path = _resolve_against_repo_root(self.pytorch_checkpoint_path)
         self.pytorch_inference_dir = _resolve_against_repo_root(self.pytorch_inference_dir)
         self.pytorch_repo_dir = _resolve_against_repo_root(self.pytorch_repo_dir)
+        return self
+
+    @model_validator(mode="after")
+    def _default_keep_alive_url_to_platform(self) -> "Settings":
+        """Fall back to the URL the host advertises for this service.
+
+        Render sets RENDER_EXTERNAL_URL on every deploy. Using it means the
+        pinger needs no configuration in production and stays off everywhere
+        else, so a dev server never talks to the deployed box (or itself).
+        """
+        if not self.keep_alive_url.strip():
+            self.keep_alive_url = os.environ.get("RENDER_EXTERNAL_URL", "").strip()
+        self.keep_alive_url = self.keep_alive_url.rstrip("/")
         return self
 
     @model_validator(mode="after")

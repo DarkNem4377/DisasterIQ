@@ -27,6 +27,16 @@ services:
         value: accounts/fireworks/models/gpt-oss-120b
       - key: DISABLE_OPENAPI_DOCS
         value: "true"
+      # Free instances spin down after ~15 min idle and cold-start in a minute
+      # or more, which is all a first-time visitor ever sees. The app pings its
+      # own RENDER_EXTERNAL_URL (injected by Render) every 10 min to stay
+      # resident. Cost: the service now runs ~730 h/month against the 750 h of
+      # free instance hours, so this must remain the only free web service on
+      # the account. Set to "false" to let it sleep again.
+      - key: KEEP_ALIVE
+        value: "true"
+      - key: KEEP_ALIVE_INTERVAL_SECONDS
+        value: "600"
       # Exact frontend origins (no broad *.vercel.app regex).
       - key: CORS_ORIGINS
         value: '["https://disasteriq.vercel.app","http://localhost:3000","http://127.0.0.1:3000"]'
