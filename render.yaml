@@ -27,13 +27,10 @@ services:
         value: accounts/fireworks/models/gpt-oss-120b
       - key: DISABLE_OPENAPI_DOCS
         value: "true"
-      # Tighten after you know the exact Vercel URL (JSON list). Example:
-      # ["https://disasteriq.vercel.app","http://localhost:3000"]
+      # Exact frontend origins (no broad *.vercel.app regex).
       - key: CORS_ORIGINS
-        sync: false
-      # Leave CORS_ORIGIN_REGEX empty in production. Only set it for temporary
-      # preview convenience (e.g. https://.*\.vercel\.app) — any matching site
-      # can then call the API cross-origin.
+        value: '["https://disasteriq.vercel.app","http://localhost:3000","http://127.0.0.1:3000"]'
+      # Leave CORS_ORIGIN_REGEX empty — prefer exact CORS_ORIGINS above.
       - key: RATE_LIMIT_REQUESTS
         value: "30"
       - key: RATE_LIMIT_WINDOW_SECONDS

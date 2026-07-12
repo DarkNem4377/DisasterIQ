@@ -21,9 +21,9 @@ backend first so you have its URL for the frontend.
    [`render.yaml`](render.yaml) and configures the `disasteriq-backend` service.
 3. Before the first deploy, open the service's **Environment** tab and set:
    - `FIREWORKS_API_KEY` = your Fireworks key (`sync: false` — never committed).
-   - `CORS_ORIGINS` = JSON list of exact frontend origins, e.g.
-     `["https://disasteriq.vercel.app"]` (add `http://localhost:3000` if you call
-     the remote API from local Next.js). Prefer this over a broad regex.
+   - `CORS_ORIGINS` is already set in [`render.yaml`](render.yaml) to
+     `https://disasteriq.vercel.app` plus localhost. Change it only if your
+     Vercel URL differs — do **not** use a broad `*.vercel.app` regex.
    - Optional: `ACCESS_TOKEN` = long random secret **only if** a server-side BFF
      or proxy will send `X-API-Key`. Do **not** put this value in
      `NEXT_PUBLIC_*` or browser JavaScript — it would be public.
@@ -32,6 +32,12 @@ backend first so you have its URL for the frontend.
 6. Verify: open `https://<your-backend>.onrender.com/health` → should return
    `{"status":"ok","inference_mode":"stub",...}`. OpenAPI docs are disabled by
    default in the blueprint (`DISABLE_OPENAPI_DOCS=true`).
+7. CORS smoke check (from a shell):
+   ```bash
+   curl -sI -H "Origin: https://disasteriq.vercel.app" https://disasteriq-backend.onrender.com/health
+   ```
+   Expect `access-control-allow-origin: https://disasteriq.vercel.app`. If that
+   header is missing, the Vercel UI will show **FRONTEND ONLY / BACKEND UNREACHABLE**.
 
 > Free tier note: the service sleeps after ~15 min idle and takes ~30–60s to wake.
 > The dashboard handles this — it shows a "Waking backend" state and keeps
@@ -51,8 +57,8 @@ backend first so you have its URL for the frontend.
    - `NEXT_PUBLIC_API_URL` = your Render backend URL from step 1.5
      (e.g. `https://disasteriq-backend.onrender.com`)
 5. Click **Deploy**. You'll get a URL like `https://disasteriq.vercel.app`.
-6. Update Render `CORS_ORIGINS` to include that exact URL, then redeploy the
-   backend if needed.
+6. If you use a different Vercel URL than `https://disasteriq.vercel.app`, update
+   Render `CORS_ORIGINS` to that exact origin and redeploy the backend.
 
 ## 3. Verify end-to-end
 

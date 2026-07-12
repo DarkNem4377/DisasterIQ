@@ -41,7 +41,11 @@ class Settings(BaseSettings):
     output_dir: Path = Path(__file__).resolve().parents[1] / "outputs"
     grid_rows: int = Field(default=4, gt=0)
     grid_cols: int = Field(default=4, gt=0)
-    cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    cors_origins: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://disasteriq.vercel.app",
+    ]
     # Opt-in regex for preview hosts. Leave empty in production and list exact
     # origins in cors_origins instead of allowing every *.vercel.app site.
     cors_origin_regex: str = ""
