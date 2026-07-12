@@ -92,20 +92,24 @@ def _demo_damage_rank(post_path: Path) -> int:
     return _damaged_pixel_count(str(target), mtime)
 
 
-def list_demo_pairs() -> list[dict[str, str]]:
-    """Return all before/after demo pairs, most-damaged first.
+def _demo_dir_key() -> tuple[tuple[str, float], ...]:
+    """Cache key for the demo listing: each search dir plus its mtime.
 
-    Expected naming:
-        <id>_pre_disaster.png
-        <id>_post_disaster.png
-
-    Ordering matters: the dashboard selects the first pair by default, and
-    several xBD scenes are genuinely undamaged. Sorting alphabetically put such
-    a pair first, so the default analysis returned an all-zero result that read
-    as a broken app. Rank by ground-truth damage so the default pair actually
-    exercises the damage classes, priority zones and map. Undamaged pairs remain
-    selectable, just not first.
+    A new pair dropped into the folder changes the directory mtime, so the cache
+    below rebuilds itself; nothing else can invalidate it at runtime.
     """
+    key: list[tuple[str, float]] = []
+    for images_dir in _demo_search_dirs():
+        try:
+            key.append((str(images_dir), images_dir.stat().st_mtime))
+        except OSError:
+            key.append((str(images_dir), -1.0))
+    return tuple(key)
+
+
+@lru_cache(maxsize=4)
+def _list_demo_pairs(_key: tuple[tuple[str, float], ...]) -> tuple[dict[str, str], ...]:
+    """Scan and rank the demo pairs. Cached — see list_demo_pairs."""
     ranked: list[tuple[int, str, dict[str, str]]] = []
     seen_ids: set[str] = set()
 
@@ -140,7 +144,29 @@ def list_demo_pairs() -> list[dict[str, str]]:
 
     ranked.sort(key=lambda item: (-item[0], item[1]))
 
-    return [pair for _damage, _base, pair in ranked]
+    return tuple(pair for _damage, _base, pair in ranked)
+
+
+def list_demo_pairs() -> list[dict[str, str]]:
+    """Return all before/after demo pairs, most-damaged first.
+
+    Expected naming:
+        <id>_pre_disaster.png
+        <id>_post_disaster.png
+
+    Ordering matters: the dashboard selects the first pair by default, and
+    several xBD scenes are genuinely undamaged. Sorting alphabetically put such
+    a pair first, so the default analysis returned an all-zero result that read
+    as a broken app. Rank by ground-truth damage so the default pair actually
+    exercises the damage classes, priority zones and map. Undamaged pairs remain
+    selectable, just not first.
+
+    Ranking decodes every ground-truth target PNG, and this runs on /health —
+    the endpoint the dashboard polls, in bursts, exactly while a free-tier host
+    is still booting and has the least CPU to spare. The result is cached so
+    those probes cost a stat() each instead of re-decoding the whole demo set.
+    """
+    return [dict(pair) for pair in _list_demo_pairs(_demo_dir_key())]
 
 
 def resolve_demo_pair(pair_id: str) -> dict[str, Path | str]:

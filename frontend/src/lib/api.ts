@@ -88,8 +88,13 @@ export const API_BASE = RAW_API_BASE.replace(/\/$/, "");
 const TIMEOUT_ANALYZE_MS = 300_000;
 const TIMEOUT_BRIEF_MS = 90_000;
 const TIMEOUT_DEFAULT_MS = 30_000;
-/** Per-attempt timeout for connect probes (must be < quiet-poll budget). */
-const TIMEOUT_CONNECT_ATTEMPT_MS = 12_000;
+/*
+  Per-attempt timeout for connect probes (must stay below the quiet-poll budget).
+  A request to a sleeping host is *held* by the platform proxy while the
+  container boots, so aborting early just throws away a probe that was about to
+  be answered and sends another one at an already-busy box. Wait it out.
+*/
+const TIMEOUT_CONNECT_ATTEMPT_MS = 25_000;
 
 function mergeAbortSignals(
   ...signals: Array<AbortSignal | undefined>
@@ -188,8 +193,13 @@ export async function fetchDemoPairs(options?: {
   hanging until they time out, while a host that is simply down refuses them
   instantly. A fixed number of retries would spend minutes in the first case and
   a couple of seconds in the second — far too little to outlast a boot.
+
+  The budget must outlast a Render free-tier spin-up. At 90s it did not: the
+  probe gave up, the dashboard latched FRONTEND ONLY, and the backend then
+  finished booting — so an upload analyzed fine (it waits up to 300s) while the
+  header still claimed the backend was offline. Three minutes covers the boot.
 */
-const CONNECT_BUDGET_MS = 90_000;
+const CONNECT_BUDGET_MS = 180_000;
 const RETRY_MIN_MS = 1_500;
 const RETRY_MAX_MS = 5_000;
 

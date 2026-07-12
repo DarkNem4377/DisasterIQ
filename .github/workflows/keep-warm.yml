@@ -1,0 +1,27 @@
+# Keeps the Render free-tier backend from spinning down.
+#
+# A free instance sleeps after ~15 minutes of inactivity, and the next visitor
+# pays a cold start of a minute or more — during which the dashboard can only
+# report the backend as unreachable. Pinging inside that idle window keeps the
+# container resident, so the first real visitor lands on a warm API.
+#
+# GitHub throttles scheduled runs on busy repos, hence 10 minutes rather than 14:
+# a skipped tick still leaves room before the instance sleeps.
+name: Keep backend warm
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping backend health
+        run: |
+          curl --fail --silent --show-error --location \
+            --max-time 300 \
+            --write-out 'health: %{http_code} in %{time_total}s\n' \
+            --output /dev/null \
+            https://disasteriq-backend.onrender.com/health

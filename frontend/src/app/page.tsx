@@ -630,9 +630,24 @@ export default function HomePage() {
     };
   }, []);
 
+  /** True while a background poll is running; user-driven retries ignore it. */
+  const quietProbeInFlightRef = useRef(false);
+
   const connect = useCallback(
     (options?: { signal?: AbortSignal; budgetMs?: number; quiet?: boolean }) => {
       const { signal, budgetMs, quiet } = options ?? {};
+
+      /*
+        A probe can run for its whole budget, which outlasts the poll interval
+        below. Without this guard the polls pile up: several probe loops end up
+        retrying at once against a host that is still booting, which is exactly
+        when it can least afford the extra load. Only the polls are suppressed —
+        an explicit "Retry connection" must always fire.
+      */
+      if (quiet) {
+        if (quietProbeInFlightRef.current) return Promise.resolve();
+        quietProbeInFlightRef.current = true;
+      }
 
       // A quiet probe is the background poll below: it must not flip the UI
       // back to "Waking backend" on every tick once we already said offline.
@@ -659,7 +674,8 @@ export default function HomePage() {
           setBackendOffline(true);
         })
         .finally(() => {
-          if (!signal?.aborted && !quiet) setConnecting(false);
+          if (quiet) quietProbeInFlightRef.current = false;
+          else if (!signal?.aborted) setConnecting(false);
         });
     },
     [markOnline]
@@ -667,7 +683,8 @@ export default function HomePage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    void connect({ signal: controller.signal, budgetMs: 90_000 });
+    // Budget comes from api.ts: it must outlast a free-tier cold start.
+    void connect({ signal: controller.signal });
     return () => controller.abort();
   }, [connect]);
 
@@ -683,8 +700,8 @@ export default function HomePage() {
     const id = setInterval(() => {
       void connect({
         signal: controller.signal,
-        // Must exceed per-attempt timeout (12s) so cold starts can retry.
-        budgetMs: 45_000,
+        // Must exceed the per-attempt timeout (25s) so cold starts can retry.
+        budgetMs: 60_000,
         quiet: true,
       });
     }, 10_000);

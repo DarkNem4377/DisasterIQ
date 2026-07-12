@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 import shutil
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import anyio
@@ -35,12 +37,25 @@ ALLOWED_IMAGE_TYPES = frozenset(
     {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/tiff"}
 )
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Warm the demo-pair listing before the first request arrives.
+
+    Ranking the pairs decodes every ground-truth mask. On a free-tier host that
+    cost would otherwise land on the first /health probe — the one request that
+    decides whether the dashboard says "online" — while the box is still cold.
+    """
+    await anyio.to_thread.run_sync(list_demo_pairs)
+    yield
+
+
 app = FastAPI(
     title="Disaster Damage Triage API",
     description="Satellite building damage assessment — Team DarkNem",
     version="0.1.0",
     docs_url=None if settings.disable_openapi_docs else "/docs",
     redoc_url=None if settings.disable_openapi_docs else "/redoc",
+    lifespan=lifespan,
 )
 
 _cors_kwargs: dict = {
@@ -54,6 +69,12 @@ if settings.cors_origin_regex.strip():
     _cors_kwargs["allow_origin_regex"] = settings.cors_origin_regex.strip()
 
 app.add_middleware(CORSMiddleware, **_cors_kwargs)
+
+
+@app.get("/")
+def root() -> dict:
+    """Liveness only — no filesystem work, so a cold host can answer it at once."""
+    return {"service": "disasteriq-backend", "status": "ok"}
 
 
 @app.get("/health")
