@@ -11,6 +11,7 @@ import {
   analyzeDemoPair,
   analyzeUpload,
   connectToBackend,
+  ConnectionCancelledError,
   demoImageUrl,
   fetchBrief,
   fetchReportPdf,
@@ -570,6 +571,13 @@ export default function HomePage() {
   const [connecting, setConnecting] = useState(true);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [analysisSeconds, setAnalysisSeconds] = useState<number | null>(null);
+  /** After a successful API call, ignore failed quiet probes until this time. */
+  const onlineUntilRef = useRef(0);
+
+  const markOnline = useCallback(() => {
+    onlineUntilRef.current = Date.now() + 120_000;
+    setBackendOffline(false);
+  }, []);
 
   const beforePanelRef = useRef<HTMLDivElement>(null);
   const afterPanelRef = useRef<HTMLDivElement>(null);
@@ -635,11 +643,16 @@ export default function HomePage() {
           if (signal?.aborted) return;
           setHealth(h);
           setPairs(p);
-          setBackendOffline(false);
+          markOnline();
           if (p.length > 0) setSelectedPair((cur) => cur || p[0].id);
         })
-        .catch(() => {
+        .catch((err) => {
           if (signal?.aborted) return;
+          if (err instanceof ConnectionCancelledError) return;
+          if (err instanceof Error && err.message === "Connection cancelled") return;
+          // Sticky online: a single quiet probe must not flip FRONTEND ONLY
+          // right after analyze/brief succeeded.
+          if (quiet && Date.now() < onlineUntilRef.current) return;
           setHealth(null);
           setPairs([]);
           setSelectedPair("");
@@ -649,12 +662,12 @@ export default function HomePage() {
           if (!signal?.aborted && !quiet) setConnecting(false);
         });
     },
-    []
+    [markOnline]
   );
 
   useEffect(() => {
     const controller = new AbortController();
-    void connect({ signal: controller.signal });
+    void connect({ signal: controller.signal, budgetMs: 90_000 });
     return () => controller.abort();
   }, [connect]);
 
@@ -670,7 +683,8 @@ export default function HomePage() {
     const id = setInterval(() => {
       void connect({
         signal: controller.signal,
-        budgetMs: 8_000,
+        // Must exceed per-attempt timeout (12s) so cold starts can retry.
+        budgetMs: 45_000,
         quiet: true,
       });
     }, 10_000);
@@ -744,11 +758,11 @@ export default function HomePage() {
 
       setAnalysisSeconds((performance.now() - startedAt) / 1000);
       setAnalysis(result);
-      setBackendOffline(false);
+      markOnline();
       setBriefLoading(true);
 
       // Refresh health/pairs in the background after a successful analyze.
-      void connect({ budgetMs: 8_000, quiet: true });
+      void connect({ budgetMs: 45_000, quiet: true });
 
       const context =
         "Pakistan disaster response context: prioritize flood and earthquake damage zones for triage.";
@@ -756,14 +770,14 @@ export default function HomePage() {
       const briefResp = await fetchBrief(result, context);
       setBrief(briefResp.brief);
       setBriefSource(briefResp.source);
-      setBackendOffline(false);
+      markOnline();
     } catch (e) {
       setError(getFriendlyError(e));
     } finally {
       setLoading(false);
       setBriefLoading(false);
     }
-  }, [preFile, postFile, selectedPair, pairs, backendOffline, setImageUrls, connect]);
+  }, [preFile, postFile, selectedPair, pairs, backendOffline, setImageUrls, connect, markOnline]);
 
   const handleDownloadReport = useCallback(async () => {
     if (!analysis || !brief) return;
@@ -781,12 +795,13 @@ export default function HomePage() {
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
+      markOnline();
     } catch (e) {
       setError(getFriendlyError(e));
     } finally {
       setReportLoading(false);
     }
-  }, [analysis, brief]);
+  }, [analysis, brief, markOnline]);
 
   const totals = useMemo(() => {
     if (!analysis) {

@@ -88,6 +88,30 @@ export const API_BASE = RAW_API_BASE.replace(/\/$/, "");
 const TIMEOUT_ANALYZE_MS = 300_000;
 const TIMEOUT_BRIEF_MS = 90_000;
 const TIMEOUT_DEFAULT_MS = 30_000;
+/** Per-attempt timeout for connect probes (must be < quiet-poll budget). */
+const TIMEOUT_CONNECT_ATTEMPT_MS = 12_000;
+
+function mergeAbortSignals(
+  ...signals: Array<AbortSignal | undefined>
+): AbortSignal | undefined {
+  const active = signals.filter((s): s is AbortSignal => Boolean(s));
+  if (active.length === 0) return undefined;
+  if (active.length === 1) return active[0];
+  if (typeof AbortSignal.any === "function") {
+    return AbortSignal.any(active);
+  }
+  const controller = new AbortController();
+  for (const signal of active) {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      return controller.signal;
+    }
+    signal.addEventListener("abort", () => controller.abort(signal.reason), {
+      once: true,
+    });
+  }
+  return controller.signal;
+}
 
 async function readError(res: Response, fallback: string): Promise<string> {
   // Never surface raw backend bodies (paths, stack fragments) in the UI.
@@ -120,10 +144,14 @@ async function readError(res: Response, fallback: string): Promise<string> {
   return fallback;
 }
 
-export async function fetchHealth(): Promise<HealthResponse> {
+export async function fetchHealth(options?: {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): Promise<HealthResponse> {
+  const timeoutMs = options?.timeoutMs ?? TIMEOUT_DEFAULT_MS;
   const res = await fetch(`${API_BASE}/health`, {
     cache: "no-store",
-    signal: AbortSignal.timeout(TIMEOUT_DEFAULT_MS),
+    signal: mergeAbortSignals(options?.signal, AbortSignal.timeout(timeoutMs)),
   });
 
   if (!res.ok) {
@@ -133,10 +161,14 @@ export async function fetchHealth(): Promise<HealthResponse> {
   return res.json();
 }
 
-export async function fetchDemoPairs(): Promise<DemoPair[]> {
+export async function fetchDemoPairs(options?: {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): Promise<DemoPair[]> {
+  const timeoutMs = options?.timeoutMs ?? TIMEOUT_DEFAULT_MS;
   const res = await fetch(`${API_BASE}/demo/pairs`, {
     cache: "no-store",
-    signal: AbortSignal.timeout(TIMEOUT_DEFAULT_MS),
+    signal: mergeAbortSignals(options?.signal, AbortSignal.timeout(timeoutMs)),
   });
 
   if (!res.ok) {
@@ -157,40 +189,80 @@ export async function fetchDemoPairs(): Promise<DemoPair[]> {
   instantly. A fixed number of retries would spend minutes in the first case and
   a couple of seconds in the second — far too little to outlast a boot.
 */
-const CONNECT_BUDGET_MS = 75_000;
+const CONNECT_BUDGET_MS = 90_000;
 const RETRY_MIN_MS = 1_500;
 const RETRY_MAX_MS = 5_000;
+
+export class ConnectionCancelledError extends Error {
+  constructor() {
+    super("Connection cancelled");
+    this.name = "ConnectionCancelledError";
+  }
+}
 
 export async function connectToBackend(options?: {
   signal?: AbortSignal;
   budgetMs?: number;
+  attemptTimeoutMs?: number;
 }): Promise<{ health: HealthResponse; pairs: DemoPair[] }> {
-  const { signal, budgetMs = CONNECT_BUDGET_MS } = options ?? {};
+  const {
+    signal,
+    budgetMs = CONNECT_BUDGET_MS,
+    attemptTimeoutMs = TIMEOUT_CONNECT_ATTEMPT_MS,
+  } = options ?? {};
   const deadline = Date.now() + budgetMs;
 
   let lastError: unknown = new Error("Backend unavailable");
   let backoff = RETRY_MIN_MS;
 
   for (;;) {
+    if (signal?.aborted) throw new ConnectionCancelledError();
+
     try {
       // Health alone defines online/offline. Demo pairs are best-effort so a
       // pairs failure cannot force FRONTEND ONLY while analyze still works.
-      const health = await fetchHealth();
+      const health = await fetchHealth({ signal, timeoutMs: attemptTimeoutMs });
       let pairs: DemoPair[] = [];
       try {
-        pairs = await fetchDemoPairs();
-      } catch {
+        pairs = await fetchDemoPairs({ signal, timeoutMs: attemptTimeoutMs });
+      } catch (pairsErr) {
+        if (signal?.aborted) throw new ConnectionCancelledError();
+        if (
+          pairsErr instanceof DOMException &&
+          pairsErr.name === "AbortError" &&
+          signal?.aborted
+        ) {
+          throw new ConnectionCancelledError();
+        }
         pairs = [];
       }
       return { health, pairs };
     } catch (err) {
+      if (signal?.aborted || err instanceof ConnectionCancelledError) {
+        throw new ConnectionCancelledError();
+      }
+      if (err instanceof DOMException && err.name === "AbortError" && signal?.aborted) {
+        throw new ConnectionCancelledError();
+      }
       lastError = err;
     }
 
-    if (signal?.aborted) throw new Error("Connection cancelled");
+    if (signal?.aborted) throw new ConnectionCancelledError();
     if (Date.now() + backoff >= deadline) throw lastError;
 
-    await new Promise((r) => setTimeout(r, backoff));
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, backoff);
+      if (!signal) return;
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(new ConnectionCancelledError());
+      };
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
     backoff = Math.min(backoff * 1.5, RETRY_MAX_MS);
   }
 }
