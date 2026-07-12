@@ -15,7 +15,7 @@ from app.config import settings
 from app.schemas import AnalysisResult, BriefRequest, BriefResponse, DemoPair, ReportRequest
 from app.security import rate_limit, require_access_token
 from app.services.cleanup import cleanup_old_jobs
-from app.services.georef import NO_GEO_MESSAGE, fit_geo_transform
+from app.services.georef import fit_geo_transform
 from app.services.inference import (
     list_demo_pairs,
     resolve_demo_image,
@@ -167,14 +167,24 @@ def _run_analysis_pipeline(
 
     if transform:
         result.geo_available = True
+        result.geo_mode = "wgs84"
+        result.geo_message = None
         for zone in result.zones:
             x0, y0, width, height = zone.bbox
             lat, lng = transform.pixel_to_latlng(x0 + width / 2, y0 + height / 2)
             zone.centroid_lat = round(lat, 6)
             zone.centroid_lng = round(lng, 6)
     else:
+        # No WGS84 control points — UI renders zones in image pixel space.
         result.geo_available = False
-        result.geo_message = NO_GEO_MESSAGE
+        result.geo_mode = "image"
+        result.geo_message = None
+        for zone in result.zones:
+            x0, y0, width, height = zone.bbox
+            # Store pixel centroids in the lat/lng fields for a uniform schema;
+            # geo_mode="image" tells the client these are not geographic.
+            zone.centroid_lat = round(y0 + height / 2, 2)
+            zone.centroid_lng = round(x0 + width / 2, 2)
 
     return result
 

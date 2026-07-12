@@ -40,6 +40,10 @@ export interface AnalysisResult {
   pair_id?: string | null;
   inference_mode: string;
   geo_available: boolean;
+  /** "wgs84" = real map coords; "image" = pixel-space zone map. */
+  geo_mode?: "wgs84" | "image";
+  /** Pixel size of the damage mask / source image [width, height]. */
+  image_size?: [number, number] | null;
   geo_message?: string | null;
 }
 
@@ -169,10 +173,15 @@ export async function connectToBackend(options?: {
 
   for (;;) {
     try {
-      const [health, pairs] = await Promise.all([
-        fetchHealth(),
-        fetchDemoPairs(),
-      ]);
+      // Health alone defines online/offline. Demo pairs are best-effort so a
+      // pairs failure cannot force FRONTEND ONLY while analyze still works.
+      const health = await fetchHealth();
+      let pairs: DemoPair[] = [];
+      try {
+        pairs = await fetchDemoPairs();
+      } catch {
+        pairs = [];
+      }
       return { health, pairs };
     } catch (err) {
       lastError = err;

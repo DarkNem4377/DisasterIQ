@@ -200,6 +200,8 @@ def score_mask(
         mask_path=None,
         mask_base64=mask_b64,
         inference_mode="scoring",
+        geo_mode="image",
+        image_size=[int(w), int(h)],
     )
 
 

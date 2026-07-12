@@ -49,6 +49,16 @@ class AnalysisResult(BaseModel):
     pair_id: str | None = None
     inference_mode: str
     geo_available: bool = False
+    geo_mode: str = Field(
+        default="image",
+        description="wgs84 for real lat/lng; image for pixel-space zone map",
+    )
+    image_size: list[int] | None = Field(
+        default=None,
+        description="Mask/image width and height in pixels [w, h]",
+        min_length=2,
+        max_length=2,
+    )
     geo_message: str | None = None
 
 

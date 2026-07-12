@@ -29,43 +29,6 @@ const DAMAGE_LEGEND = [
   { label: "Destroyed", swatch: "bg-red-500" },
 ] as const;
 
-// The benchmark cards must describe the stack that actually ran, derived from
-// the backend's reported inference_mode — not a fixed "AMD MI300X / PyTorch".
-function getInferenceMeta(mode: string | undefined) {
-  switch (mode) {
-    case "pytorch":
-      return {
-        device: "Fine-tuned checkpoint",
-        deviceHelper: "local / cloud GPU",
-        framework: "PyTorch",
-        frameworkHelper: "xView2 damage",
-      };
-    case "docker":
-      return {
-        device: "xView2 baseline",
-        deviceHelper: "Docker container",
-        framework: "TensorFlow",
-        frameworkHelper: "xView2 baseline",
-      };
-    case "stub-groundtruth":
-      return {
-        device: "CPU",
-        deviceHelper: "xBD ground-truth",
-        framework: "NumPy / SciPy",
-        frameworkHelper: "Scoring",
-      };
-    case "stub-heuristic":
-      return {
-        device: "CPU",
-        deviceHelper: "Change detection",
-        framework: "NumPy / SciPy",
-        frameworkHelper: "Heuristic",
-      };
-    default:
-      return { device: "—", deviceHelper: "", framework: "—", frameworkHelper: "" };
-  }
-}
-
 function getFriendlyError(error: unknown) {
   // AbortSignal.timeout rejects with a TimeoutError DOMException, whose message
   // ("signal timed out") means nothing to a coordinator staring at the screen.
@@ -245,7 +208,7 @@ function UploadDropBox({
 
 function EmptyImageState() {
   return (
-    <div className="flex h-full min-h-[540px] items-center justify-center bg-slate-950/35">
+    <div className="flex h-full min-h-[720px] items-center justify-center bg-slate-950/35">
       <div className="px-6 text-center">
         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-diq-line/70 bg-slate-950/70 text-xl text-slate-500">
           ◇
@@ -315,42 +278,6 @@ function DamageStatCard({
         </div>
 
         <span className={`text-2xl ${styles.text}`}>{icon}</span>
-      </div>
-    </div>
-  );
-}
-
-function BenchmarkCard({
-  label,
-  value,
-  helper,
-  icon,
-  accent = "border-diq-line/60",
-}: {
-  label: string;
-  value: string | number;
-  helper: string;
-  icon: string;
-  accent?: string;
-}) {
-  return (
-    <div
-      className={`rounded-xl border ${accent} bg-slate-950/45 p-4 shadow-xl shadow-black/10`}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-            {label}
-          </p>
-
-          <p className="mt-2 text-2xl font-black text-white">{value}</p>
-
-          <p className="mt-1 text-xs text-slate-500">{helper}</p>
-        </div>
-
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-diq-line/60 bg-slate-950/70 text-xl text-slate-400">
-          {icon}
-        </div>
       </div>
     </div>
   );
@@ -743,7 +670,7 @@ export default function HomePage() {
     const id = setInterval(() => {
       void connect({
         signal: controller.signal,
-        budgetMs: 0,
+        budgetMs: 8_000,
         quiet: true,
       });
     }, 10_000);
@@ -817,7 +744,11 @@ export default function HomePage() {
 
       setAnalysisSeconds((performance.now() - startedAt) / 1000);
       setAnalysis(result);
+      setBackendOffline(false);
       setBriefLoading(true);
+
+      // Refresh health/pairs in the background after a successful analyze.
+      void connect({ budgetMs: 8_000, quiet: true });
 
       const context =
         "Pakistan disaster response context: prioritize flood and earthquake damage zones for triage.";
@@ -825,13 +756,14 @@ export default function HomePage() {
       const briefResp = await fetchBrief(result, context);
       setBrief(briefResp.brief);
       setBriefSource(briefResp.source);
+      setBackendOffline(false);
     } catch (e) {
       setError(getFriendlyError(e));
     } finally {
       setLoading(false);
       setBriefLoading(false);
     }
-  }, [preFile, postFile, selectedPair, pairs, backendOffline, setImageUrls]);
+  }, [preFile, postFile, selectedPair, pairs, backendOffline, setImageUrls, connect]);
 
   const handleDownloadReport = useCallback(async () => {
     if (!analysis || !brief) return;
@@ -898,27 +830,6 @@ export default function HomePage() {
     },
     [totals]
   );
-
-  // Mean predicted-class probability across zones — only present in pytorch
-  // mode; the stub/heuristic modes emit label masks with no probabilities.
-  const meanConfidence = useMemo(() => {
-    if (!analysis) return null;
-    const vals = analysis.zones
-      .map((z) => z.confidence)
-      .filter((c): c is number => typeof c === "number");
-    if (!vals.length) return null;
-    return vals.reduce((a, b) => a + b, 0) / vals.length;
-  }, [analysis]);
-
-  const inferenceMeta = useMemo(
-    () => getInferenceMeta(analysis?.inference_mode),
-    [analysis],
-  );
-
-  const throughput =
-    analysisSeconds && analysisSeconds > 0 && totals.total > 0
-      ? Math.round(totals.total / analysisSeconds)
-      : null;
 
   const canAnalyze = Boolean((preFile && postFile) || selectedPair);
 
@@ -1148,7 +1059,7 @@ export default function HomePage() {
 
           <section className="space-y-4">
             <div className="overflow-hidden rounded-xl border border-blue-500/35 bg-diq-panel/45 shadow-2xl shadow-black/20">
-              <div className="grid min-h-[540px] gap-0 lg:grid-cols-2">
+              <div className="grid min-h-[720px] gap-0 lg:grid-cols-2">
                 <div
                   ref={beforePanelRef}
                   className="relative overflow-hidden border-b border-diq-line/60 bg-slate-950 lg:border-b-0 lg:border-r"
@@ -1161,7 +1072,7 @@ export default function HomePage() {
                     <img
                       src={preUrl}
                       alt="Before disaster satellite imagery"
-                      className="h-full min-h-[540px] w-full object-cover"
+                      className="h-full min-h-[720px] w-full object-cover"
                     />
                   ) : (
                     <EmptyImageState />
@@ -1205,64 +1116,7 @@ export default function HomePage() {
               </div>
             </div>
 
-            <div className="rounded-xl border border-blue-500/35 bg-diq-panel/45 p-4 shadow-2xl shadow-black/20">
-              <p className="mb-4 font-label text-xs uppercase tracking-[0.18em] text-slate-200">
-                Performance & Benchmark
-              </p>
-
-              <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-5">
-                <BenchmarkCard
-                  label="Model Confidence"
-                  value={
-                    meanConfidence != null
-                      ? `${(meanConfidence * 100).toFixed(1)}%`
-                      : analysis
-                        ? "N/A"
-                        : "—"
-                  }
-                  helper={
-                    meanConfidence != null
-                      ? "Mean model probability"
-                      : "PyTorch mode only"
-                  }
-                  icon="⌁"
-                  accent="border-green-500/30"
-                />
-
-                <BenchmarkCard
-                  label="Inference Device"
-                  value={analysis ? inferenceMeta.device : "—"}
-                  helper={analysis ? inferenceMeta.deviceHelper : "Inference backend"}
-                  icon="▣"
-                  accent="border-green-500/30"
-                />
-
-                <BenchmarkCard
-                  label="Inference Time"
-                  value={analysisSeconds != null ? `${analysisSeconds.toFixed(1)} sec` : "—"}
-                  helper="End-to-end processing"
-                  icon="◷"
-                />
-
-                <BenchmarkCard
-                  label="Throughput"
-                  value={throughput != null ? `${throughput}` : "—"}
-                  helper="buildings/sec"
-                  icon="◜"
-                  accent="border-green-500/30"
-                />
-
-                <BenchmarkCard
-                  label="Framework"
-                  value={analysis ? inferenceMeta.framework : "—"}
-                  helper={analysis ? inferenceMeta.frameworkHelper : "Inference stack"}
-                  icon="◉"
-                  accent="border-orange-500/30"
-                />
-              </div>
-            </div>
-
-            <ZoneMap analysis={analysis} />
+            <ZoneMap analysis={analysis} postImageUrl={postUrl || undefined} />
 
             <BriefPanel
               brief={brief}
