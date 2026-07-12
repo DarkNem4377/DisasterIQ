@@ -10,10 +10,9 @@ import ZoneMap from "@/components/ZoneMap";
 import {
   analyzeDemoPair,
   analyzeUpload,
+  connectToBackend,
   demoImageUrl,
   fetchBrief,
-  fetchDemoPairs,
-  fetchHealth,
   fetchReportPdf,
   type AnalysisResult,
   type DemoPair,
@@ -406,7 +405,27 @@ function PipelineStatus({
   );
 }
 
-function BackendOfflineNotice() {
+function BackendConnectingNotice() {
+  return (
+    <div className="rounded-xl border border-blue-500/30 bg-blue-950/15 px-3 py-2.5">
+      <div className="flex items-start gap-2.5">
+        <span className="mt-1 h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-blue-400" />
+
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.12em] text-blue-200">
+            Waking backend
+          </p>
+          <p className="mt-1 text-[11px] leading-5 text-blue-100/60">
+            The server sleeps when idle. First load can take up to a minute —
+            demo pairs will appear automatically.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BackendOfflineNotice({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="rounded-xl border border-amber-500/30 bg-amber-950/15 px-3 py-2.5">
       <div className="flex items-start gap-2.5">
@@ -416,11 +435,19 @@ function BackendOfflineNotice() {
 
         <div>
           <p className="text-xs font-black uppercase tracking-[0.12em] text-amber-200">
-            Backend offline
+            Backend unreachable
           </p>
           <p className="mt-1 text-[11px] leading-5 text-amber-100/60">
-            Demo pairs and analysis will work after FastAPI starts.
+            Could not reach the analysis server. It may still be starting up.
           </p>
+
+          <button
+            type="button"
+            onClick={onRetry}
+            className="mt-2 rounded-lg border border-amber-500/40 bg-amber-950/30 px-3 py-1.5 text-[11px] font-bold text-amber-100 transition hover:border-amber-400/70 hover:bg-amber-900/30"
+          >
+            ↻ Retry connection
+          </button>
         </div>
       </div>
     </div>
@@ -551,6 +578,7 @@ export default function HomePage() {
   const [reportLoading, setReportLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [backendOffline, setBackendOffline] = useState(false);
+  const [connecting, setConnecting] = useState(true);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [analysisSeconds, setAnalysisSeconds] = useState<number | null>(null);
 
@@ -605,25 +633,64 @@ export default function HomePage() {
     };
   }, []);
 
-  useEffect(() => {
-    fetchHealth()
-      .then(setHealth)
-      .catch(() => setHealth(null));
-  }, []);
+  const connect = useCallback(
+    (options?: { signal?: AbortSignal; budgetMs?: number; quiet?: boolean }) => {
+      const { signal, budgetMs, quiet } = options ?? {};
+
+      // A quiet probe is the background poll below: it must not flip the UI
+      // back to "Waking backend" on every tick once we already said offline.
+      if (!quiet) setConnecting(true);
+
+      return connectToBackend({ signal, budgetMs })
+        .then(({ health: h, pairs: p }) => {
+          if (signal?.aborted) return;
+          setHealth(h);
+          setPairs(p);
+          setBackendOffline(false);
+          if (p.length > 0) setSelectedPair((cur) => cur || p[0].id);
+        })
+        .catch(() => {
+          if (signal?.aborted) return;
+          setHealth(null);
+          setPairs([]);
+          setSelectedPair("");
+          setBackendOffline(true);
+        })
+        .finally(() => {
+          if (!signal?.aborted && !quiet) setConnecting(false);
+        });
+    },
+    []
+  );
 
   useEffect(() => {
-    fetchDemoPairs()
-      .then((p) => {
-        setPairs(p);
-        setBackendOffline(false);
-        if (p.length > 0) setSelectedPair(p[0].id);
-      })
-      .catch(() => {
-        setPairs([]);
-        setSelectedPair("");
-        setBackendOffline(true);
+    const controller = new AbortController();
+    void connect({ signal: controller.signal });
+    return () => controller.abort();
+  }, [connect]);
+
+  /*
+    Once the budget is spent we show "offline", but a backend can still come up
+    later (a slow boot, a restarted dev server). Keep probing quietly so the
+    dashboard heals itself instead of demanding a refresh.
+  */
+  useEffect(() => {
+    if (!backendOffline || connecting) return;
+
+    const controller = new AbortController();
+    const id = setInterval(() => {
+      void connect({
+        signal: controller.signal,
+        budgetMs: 0,
+        quiet: true,
       });
-  }, []);
+    }, 10_000);
+
+    return () => {
+      controller.abort();
+      clearInterval(id);
+    };
+  }, [backendOffline, connecting, connect]);
 
   const loadDemoPair = useCallback(() => {
     setError(null);
@@ -848,16 +915,20 @@ export default function HomePage() {
                   className={`mt-1.5 inline-flex rounded border px-3 py-1 text-sm font-black uppercase tracking-[0.12em] ${
                     loading
                       ? "border-diq-orange/70 bg-diq-orange/10 text-diq-orange"
-                      : backendOffline
-                        ? "border-amber-500/70 bg-amber-950/40 text-amber-300"
-                        : "border-green-500/70 bg-green-950/40 text-green-300"
+                      : connecting
+                        ? "border-blue-500/70 bg-blue-950/40 text-blue-300"
+                        : backendOffline
+                          ? "border-amber-500/70 bg-amber-950/40 text-amber-300"
+                          : "border-green-500/70 bg-green-950/40 text-green-300"
                   }`}
                 >
                   {loading
                     ? "Analyzing"
-                    : backendOffline
-                      ? "Frontend Only"
-                      : "Ready"}
+                    : connecting
+                      ? "Connecting…"
+                      : backendOffline
+                        ? "Frontend Only"
+                        : "Ready"}
                 </span>
 
                 {health && !backendOffline && (
@@ -872,17 +943,25 @@ export default function HomePage() {
             <button
               type="button"
               className={`hidden shrink-0 items-center gap-2.5 rounded-lg border px-5 py-2.5 text-base font-semibold shadow-lg shadow-black/20 transition 2xl:flex ${
-                backendOffline
+                backendOffline && !connecting
                   ? "border-amber-500/30 bg-amber-950/20 text-amber-200"
                   : "border-blue-500/30 bg-blue-950/30 text-blue-100 hover:border-blue-400/50"
               }`}
             >
               <span
                 className={`h-3 w-3 rounded-full ${
-                  backendOffline ? "bg-amber-400" : "bg-green-400"
+                  connecting
+                    ? "animate-pulse bg-blue-400"
+                    : backendOffline
+                      ? "bg-amber-400"
+                      : "bg-green-400"
                 }`}
               />
-              {backendOffline ? "Backend Offline" : "System Health"}
+              {connecting
+                ? "Waking Backend…"
+                : backendOffline
+                  ? "Backend Offline"
+                  : "System Health"}
               <span className="text-slate-500">⌄</span>
             </button>
           </div>
@@ -953,7 +1032,9 @@ export default function HomePage() {
                 >
                   {pairs.length === 0 && (
                     <option value="">
-                      Backend offline — demo pairs unavailable
+                      {connecting
+                        ? "Waking backend — demo pairs loading…"
+                        : "Backend offline — demo pairs unavailable"}
                     </option>
                   )}
 
@@ -983,7 +1064,11 @@ export default function HomePage() {
                 </button>
               </div>
 
-              {backendOffline && <BackendOfflineNotice />}
+              {connecting && <BackendConnectingNotice />}
+
+              {backendOffline && !connecting && (
+                <BackendOfflineNotice onRetry={() => void connect()} />
+              )}
 
               {error && <ErrorNotice message={error} />}
 

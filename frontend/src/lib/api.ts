@@ -120,6 +120,50 @@ export async function fetchDemoPairs(): Promise<DemoPair[]> {
   return res.json();
 }
 
+/*
+  The deployed backend sits on a free tier that sleeps when idle, and a cold
+  start takes longer than any single request timeout. One failed probe therefore
+  means "still waking", not "offline" — so keep probing until the budget runs
+  out, and only then call it offline.
+
+  The budget is wall-clock, not a retry count: a sleeping host leaves requests
+  hanging until they time out, while a host that is simply down refuses them
+  instantly. A fixed number of retries would spend minutes in the first case and
+  a couple of seconds in the second — far too little to outlast a boot.
+*/
+const CONNECT_BUDGET_MS = 75_000;
+const RETRY_MIN_MS = 1_500;
+const RETRY_MAX_MS = 5_000;
+
+export async function connectToBackend(options?: {
+  signal?: AbortSignal;
+  budgetMs?: number;
+}): Promise<{ health: HealthResponse; pairs: DemoPair[] }> {
+  const { signal, budgetMs = CONNECT_BUDGET_MS } = options ?? {};
+  const deadline = Date.now() + budgetMs;
+
+  let lastError: unknown = new Error("Backend unavailable");
+  let backoff = RETRY_MIN_MS;
+
+  for (;;) {
+    try {
+      const [health, pairs] = await Promise.all([
+        fetchHealth(),
+        fetchDemoPairs(),
+      ]);
+      return { health, pairs };
+    } catch (err) {
+      lastError = err;
+    }
+
+    if (signal?.aborted) throw new Error("Connection cancelled");
+    if (Date.now() + backoff >= deadline) throw lastError;
+
+    await new Promise((r) => setTimeout(r, backoff));
+    backoff = Math.min(backoff * 1.5, RETRY_MAX_MS);
+  }
+}
+
 export async function analyzeDemoPair(pairId: string): Promise<AnalysisResult> {
   const form = new FormData();
   form.append("demo_pair_id", pairId);
