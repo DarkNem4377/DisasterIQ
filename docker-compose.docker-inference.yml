@@ -1,0 +1,11 @@
+# Optional overlay: mount the host Docker socket for INFERENCE_MODE=docker.
+# WARNING: grants the backend container root-equivalent control of the host.
+# Never use this on shared or cloud hosts. Render deployments never mount it.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.docker-inference.yml up --build
+services:
+  backend:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - INFERENCE_MODE=${INFERENCE_MODE:-docker}

@@ -69,7 +69,11 @@ def require_access_token(x_api_key: str | None = Header(default=None)) -> None:
     expected = settings.access_token
     if not expected:
         return
-    # compare_digest keeps the check constant-time, so a wrong key cannot be
-    # recovered byte by byte from response timing.
-    if x_api_key is None or not secrets.compare_digest(x_api_key, expected):
+    # compare_digest raises ValueError on unequal lengths for str; treat that
+    # as a failed auth rather than a 500.
+    if (
+        x_api_key is None
+        or len(x_api_key) != len(expected)
+        or not secrets.compare_digest(x_api_key, expected)
+    ):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")

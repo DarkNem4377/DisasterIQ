@@ -86,12 +86,34 @@ const TIMEOUT_BRIEF_MS = 90_000;
 const TIMEOUT_DEFAULT_MS = 30_000;
 
 async function readError(res: Response, fallback: string): Promise<string> {
+  // Never surface raw backend bodies (paths, stack fragments) in the UI.
+  const statusHints: Record<number, string> = {
+    400: "The request was rejected. Check that both images are valid PNG/JPEG under 15 MB.",
+    401: "This analysis server requires an API key. Contact the operator if you need access.",
+    404: "The requested demo pair or image was not found.",
+    413: "The upload is too large for this server.",
+    429: "Too many requests. Wait a moment and try again.",
+    503: "The analysis service is temporarily unavailable. Try again shortly.",
+  };
+  if (statusHints[res.status]) {
+    return statusHints[res.status];
+  }
   try {
     const text = await res.text();
-    return text || fallback;
+    if (!text) return fallback;
+    try {
+      const json = JSON.parse(text) as { detail?: unknown };
+      if (typeof json.detail === "string" && json.detail.length < 200) {
+        // Allow short, intentional FastAPI detail strings only.
+        return json.detail;
+      }
+    } catch {
+      /* not JSON */
+    }
   } catch {
-    return fallback;
+    /* ignore */
   }
+  return fallback;
 }
 
 export async function fetchHealth(): Promise<HealthResponse> {
@@ -248,11 +270,21 @@ export function demoImageUrl(filenameOrPath: string): string {
   const value = filenameOrPath.trim();
 
   /*
-    Case 1:
-    Backend already returned a full URL.
+    Absolute URLs are only accepted when they already point at this API.
+    Reject arbitrary http(s) hosts to avoid open redirects from a poisoned
+    /demo/pairs payload.
   */
   if (value.startsWith("http://") || value.startsWith("https://")) {
-    return value;
+    try {
+      const url = new URL(value);
+      const base = new URL(API_BASE);
+      if (url.origin === base.origin) {
+        return value;
+      }
+    } catch {
+      /* fall through */
+    }
+    return "";
   }
 
   /*

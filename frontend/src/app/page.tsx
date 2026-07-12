@@ -35,10 +35,10 @@ function getInferenceMeta(mode: string | undefined) {
   switch (mode) {
     case "pytorch":
       return {
-        device: "AMD Instinct MI300X",
-        deviceHelper: "ROCm",
+        device: "Fine-tuned checkpoint",
+        deviceHelper: "local / cloud GPU",
         framework: "PyTorch",
-        frameworkHelper: "ROCm",
+        frameworkHelper: "xView2 damage",
       };
     case "docker":
       return {
@@ -133,6 +133,25 @@ function FilePicker({
   );
 }
 
+const MAX_CLIENT_UPLOAD_BYTES = 15 * 1024 * 1024;
+const ALLOWED_CLIENT_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+  "image/tiff",
+]);
+
+function validateUploadFile(file: File): string | null {
+  if (file.size > MAX_CLIENT_UPLOAD_BYTES) {
+    return "Each image must be 15 MB or smaller.";
+  }
+  if (file.type && !ALLOWED_CLIENT_TYPES.has(file.type)) {
+    return "Use PNG, JPEG, WebP, or TIFF images.";
+  }
+  return null;
+}
+
 function UploadDropBox({
   preFile,
   postFile,
@@ -144,8 +163,33 @@ function UploadDropBox({
   onPreSelect: (f: File | null) => void;
   onPostSelect: (f: File | null) => void;
 }) {
+  const assignDropped = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const list = Array.from(files).slice(0, 2);
+    list.forEach((file, index) => {
+      const err = validateUploadFile(file);
+      if (err) {
+        window.alert(err);
+        return;
+      }
+      if (index === 0) onPreSelect(file);
+      if (index === 1) onPostSelect(file);
+    });
+  };
+
   return (
-    <div className="rounded-2xl border border-dashed border-blue-500/35 bg-slate-950/30 p-3">
+    <div
+      className="rounded-2xl border border-dashed border-blue-500/35 bg-slate-950/30 p-3"
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        assignDropped(e.dataTransfer.files);
+      }}
+    >
       <div className="flex flex-col items-center justify-center text-center">
         <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-diq-line/70 bg-slate-950/70 text-xl text-slate-400">
           ⇧
@@ -164,18 +208,36 @@ function UploadDropBox({
         <FilePicker
           label="Before image"
           file={preFile}
-          onSelect={onPreSelect}
+          onSelect={(f) => {
+            if (f) {
+              const err = validateUploadFile(f);
+              if (err) {
+                window.alert(err);
+                return;
+              }
+            }
+            onPreSelect(f);
+          }}
         />
 
         <FilePicker
           label="After image"
           file={postFile}
-          onSelect={onPostSelect}
+          onSelect={(f) => {
+            if (f) {
+              const err = validateUploadFile(f);
+              if (err) {
+                window.alert(err);
+                return;
+              }
+            }
+            onPostSelect(f);
+          }}
         />
       </div>
 
       <p className="mt-3 text-center text-[10px] text-slate-500">
-        PNG, JPG, TIFF up to 100MB each
+        PNG, JPG, WebP, TIFF up to 15MB each
       </p>
     </div>
   );
@@ -1014,8 +1076,12 @@ export default function HomePage() {
               </div>
 
               <div className="space-y-3">
+                <label htmlFor="demo-pair" className="sr-only">
+                  Demo satellite image pair
+                </label>
                 <select
                   id="demo-pair"
+                  aria-label="Demo satellite image pair"
                   value={selectedPair}
                   onChange={(e) => {
                     setSelectedPair(e.target.value);

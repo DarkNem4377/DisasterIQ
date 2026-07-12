@@ -20,16 +20,26 @@ backend first so you have its URL for the frontend.
 2. **New → Blueprint**, select the `DarkNem4377/DisasterIQ` repo. Render reads
    [`render.yaml`](render.yaml) and configures the `disasteriq-backend` service.
 3. Before the first deploy, open the service's **Environment** tab and set:
-   - `FIREWORKS_API_KEY` = your Fireworks key (this is why it's `sync: false` —
-     it is never committed).
+   - `FIREWORKS_API_KEY` = your Fireworks key (`sync: false` — never committed).
+   - `CORS_ORIGINS` = JSON list of exact frontend origins, e.g.
+     `["https://disasteriq.vercel.app"]` (add `http://localhost:3000` if you call
+     the remote API from local Next.js). Prefer this over a broad regex.
+   - Optional: `ACCESS_TOKEN` = long random secret **only if** a server-side BFF
+     or proxy will send `X-API-Key`. Do **not** put this value in
+     `NEXT_PUBLIC_*` or browser JavaScript — it would be public.
 4. Click **Deploy**. First build takes a few minutes.
 5. Copy the service URL, e.g. `https://disasteriq-backend.onrender.com`.
 6. Verify: open `https://<your-backend>.onrender.com/health` → should return
-   `{"status":"ok","inference_mode":"stub",...}`.
+   `{"status":"ok","inference_mode":"stub",...}`. OpenAPI docs are disabled by
+   default in the blueprint (`DISABLE_OPENAPI_DOCS=true`).
 
 > Free tier note: the service sleeps after ~15 min idle and takes ~30–60s to wake.
 > The dashboard handles this — it shows a "Waking backend" state and keeps
 > retrying until the backend answers, rather than reporting it as offline.
+
+> Rate limits: blueprint defaults to 30 requests / 60s per client IP. Render's
+> `--forwarded-allow-ips "*"` is safe **only** behind Render's proxy — do not
+> reuse that flag on a self-hosted host without pinning real proxy IPs.
 
 ## 2. Frontend → Vercel
 
@@ -41,14 +51,26 @@ backend first so you have its URL for the frontend.
    - `NEXT_PUBLIC_API_URL` = your Render backend URL from step 1.5
      (e.g. `https://disasteriq-backend.onrender.com`)
 5. Click **Deploy**. You'll get a URL like `https://disasteriq.vercel.app`.
+6. Update Render `CORS_ORIGINS` to include that exact URL, then redeploy the
+   backend if needed.
 
 ## 3. Verify end-to-end
 
 Open your Vercel URL, pick the demo pair, click **Analyze Damage**. You should
-see the dashboard populate and a live AI brief (the backend CORS already allows
-`*.vercel.app`). Put the Vercel URL in your GitHub repo's **About → Website**.
+see the dashboard populate and a live AI brief. Put the Vercel URL in your
+GitHub repo's **About → Website**.
 
 ## Custom domain (optional)
 
 Using a non-Vercel domain? Set `CORS_ORIGINS` in Render to a JSON list including
-it, e.g. `["https://disasteriq.com"]`.
+it, e.g. `["https://disasteriq.com"]`. Avoid `CORS_ORIGIN_REGEX=https://.*\.vercel\.app`
+in production — that allows any Vercel deployment to call your API.
+
+## Local Docker inference
+
+Default `docker compose up` does **not** mount `/var/run/docker.sock`. For local
+`INFERENCE_MODE=docker` only:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.docker-inference.yml up --build
+```

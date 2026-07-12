@@ -115,6 +115,7 @@ def test_score_mask_end_to_end(tmp_path):
     assert ranks == sorted(ranks)
     assert result.zones[0].priority_score >= result.zones[-1].priority_score
     assert result.zones[0].building_counts.destroyed == 1
+    assert result.mask_path is None
 
 
 def test_overlay_colors_match_the_dashboard_legend():

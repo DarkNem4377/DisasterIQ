@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     grid_rows: int = Field(default=4, gt=0)
     grid_cols: int = Field(default=4, gt=0)
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    # Opt-in regex for preview hosts. Leave empty in production and list exact
+    # origins in cors_origins instead of allowing every *.vercel.app site.
+    cors_origin_regex: str = ""
 
     # Endpoint protection. Both are opt-in so the demo works out of the box.
     # access_token: if set, the expensive endpoints require a matching X-API-Key
@@ -52,6 +55,8 @@ class Settings(BaseSettings):
     access_token: str = ""
     rate_limit_requests: int = 60
     rate_limit_window_seconds: int = 60
+    # When true, /docs and /redoc are disabled (recommended for public deploys).
+    disable_openapi_docs: bool = False
 
     @model_validator(mode="after")
     def _resolve_relative_paths(self) -> "Settings":

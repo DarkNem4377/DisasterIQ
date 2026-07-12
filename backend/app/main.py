@@ -12,8 +12,8 @@ from fastapi.responses import FileResponse, Response
 from PIL import Image, UnidentifiedImageError
 
 from app.config import settings
-from app.security import rate_limit, require_access_token
 from app.schemas import AnalysisResult, BriefRequest, BriefResponse, DemoPair, ReportRequest
+from app.security import rate_limit, require_access_token
 from app.services.cleanup import cleanup_old_jobs
 from app.services.georef import NO_GEO_MESSAGE, fit_geo_transform
 from app.services.inference import (
@@ -28,7 +28,9 @@ from app.services.scoring import score_mask
 
 _SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
-MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+# Keep uploads small enough for free-tier CPU hosts; clients should pre-check.
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+MAX_IMAGE_PIXELS = 40_000_000  # ~6327x6327
 ALLOWED_IMAGE_TYPES = frozenset(
     {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/tiff"}
 )
@@ -37,18 +39,21 @@ app = FastAPI(
     title="Disaster Damage Triage API",
     description="Satellite building damage assessment — Team DarkNem",
     version="0.1.0",
+    docs_url=None if settings.disable_openapi_docs else "/docs",
+    redoc_url=None if settings.disable_openapi_docs else "/redoc",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    # Allow any Vercel deployment (production + preview URLs) to call the API
-    # without hardcoding the exact domain. Set CORS_ORIGINS for a custom domain.
-    allow_origin_regex=r"https://.*\.vercel\.app",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_cors_kwargs: dict = {
+    "allow_origins": settings.cors_origins,
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+# Broad host regexes (e.g. *.vercel.app) are opt-in via CORS_ORIGIN_REGEX.
+if settings.cors_origin_regex.strip():
+    _cors_kwargs["allow_origin_regex"] = settings.cors_origin_regex.strip()
+
+app.add_middleware(CORSMiddleware, **_cors_kwargs)
 
 
 @app.get("/health")
@@ -77,9 +82,10 @@ def demo_image(filename: str) -> FileResponse:
 
 def _validate_upload(upload: UploadFile) -> None:
     """Reject obviously bad uploads before a single byte reaches disk."""
-    if upload.content_type and upload.content_type not in ALLOWED_IMAGE_TYPES:
+    if not upload.content_type or upload.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(
-            status_code=400, detail=f"Unsupported image type: {upload.content_type}"
+            status_code=400,
+            detail=f"Unsupported image type: {upload.content_type or 'missing Content-Type'}",
         )
     if upload.size is not None and upload.size > MAX_UPLOAD_BYTES:
         raise HTTPException(
@@ -103,7 +109,10 @@ def _save_upload(upload: UploadFile, dest: Path, job_dir: Path) -> None:
                 if written > MAX_UPLOAD_BYTES:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Image exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB upload limit",
+                        detail=(
+                            f"Image exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB "
+                            "upload limit"
+                        ),
                     )
                 f.write(chunk)
     except HTTPException:
@@ -113,6 +122,19 @@ def _save_upload(upload: UploadFile, dest: Path, job_dir: Path) -> None:
     try:
         with Image.open(dest) as img:
             img.verify()
+        with Image.open(dest) as img:
+            width, height = img.size
+            if width * height > MAX_IMAGE_PIXELS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Image resolution too large ({width}x{height}); "
+                        f"max {MAX_IMAGE_PIXELS:,} pixels"
+                    ),
+                )
+    except HTTPException:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail="Uploaded file is not a valid image") from exc
@@ -197,8 +219,9 @@ async def analyze(
         job_dir = settings.upload_dir / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
 
-        pre_path = job_dir / (Path(pre_image.filename or "pre.png").name or "pre.png")
-        post_path = job_dir / (Path(post_image.filename or "post.png").name or "post.png")
+        # Fixed names avoid basename collisions between pre/post uploads.
+        pre_path = job_dir / "pre.png"
+        post_path = job_dir / "post.png"
 
         _save_upload(pre_image, pre_path, job_dir)
         _save_upload(post_image, post_path, job_dir)
@@ -217,7 +240,7 @@ async def analyze(
     dependencies=[Depends(rate_limit), Depends(require_access_token)],
 )
 async def brief(body: BriefRequest) -> BriefResponse:
-    return await generate_brief(body.analysis, body.context)
+    return await generate_brief(body.analysis.model_dump(), body.context)
 
 
 @app.post(

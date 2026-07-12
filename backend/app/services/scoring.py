@@ -196,7 +196,8 @@ def score_mask(
     return AnalysisResult(
         zones=zones,
         summary=summary,
-        mask_path=str(mask_path),
+        # Never expose server filesystem paths in API responses.
+        mask_path=None,
         mask_base64=mask_b64,
         inference_mode="scoring",
     )

@@ -98,16 +98,7 @@ export DATA_DIR="$DEST_SUBSET"
 ensure_xview2_layout() {
   local root="$1"
   [[ -d "$root/images" ]] || return 0
-  [[ -d "$root/train/images" ]] && return 0
-  for split in train test; do
-    mkdir -p "$root/$split"
-    for sub in images targets labels; do
-      [[ -d "$root/$sub" ]] || continue
-      [[ -e "$root/$split/$sub" ]] && continue
-      ln -sfn "$(readlink -f "$root/$sub")" "$root/$split/$sub"
-    done
-  done
-  echo "Created xView2 train/test symlinks under $root"
+  python3 "$FINETUNE_DIR/data_layout.py" "$root"
 }
 ensure_xview2_layout "$DEST_SUBSET"
 

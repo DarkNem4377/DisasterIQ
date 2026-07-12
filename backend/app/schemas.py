@@ -1,5 +1,3 @@
-from typing import Any
-
 from pydantic import BaseModel, Field
 
 
@@ -55,8 +53,10 @@ class AnalysisResult(BaseModel):
 
 
 class BriefRequest(BaseModel):
-    analysis: dict[str, Any]
-    context: str | None = None
+    """Require a typed analysis payload so clients cannot dump unbounded JSON."""
+
+    analysis: AnalysisResult
+    context: str | None = Field(default=None, max_length=2000)
 
 
 class BriefResponse(BaseModel):

@@ -398,6 +398,8 @@ export default function DamageCanvas({ postImageUrl, analysis }: Props) {
       <canvas
         ref={canvasRef}
         className="pointer-events-none absolute inset-0 h-full w-full"
+        role="img"
+        aria-label="Damage overlay showing ranked priority zones on the post-disaster image"
       />
 
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-slate-950/10 via-transparent to-slate-950/20" />

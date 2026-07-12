@@ -9,7 +9,20 @@ from app.main import app
 
 client = TestClient(app)
 
-BRIEF_BODY = {"analysis": {"summary": {}, "zones": []}, "context": None}
+BRIEF_BODY = {
+    "analysis": {
+        "zones": [],
+        "summary": {
+            "total_building_pixels": 0,
+            "total_buildings": 0,
+            "destroyed_pct": 0.0,
+            "major_pct": 0.0,
+            "minor_pct": 0.0,
+        },
+        "inference_mode": "stub",
+    },
+    "context": None,
+}
 
 
 @pytest.fixture(autouse=True)
@@ -59,6 +72,15 @@ def test_access_token_enforced_when_set():
     assert (
         client.post("/brief", json=BRIEF_BODY, headers={"X-API-Key": "s3cret"}).status_code
         == 200
+    )
+
+
+def test_access_token_unequal_length_returns_401():
+    settings.access_token = "s3cret"
+    settings.rate_limit_requests = 0
+    assert (
+        client.post("/brief", json=BRIEF_BODY, headers={"X-API-Key": "x"}).status_code
+        == 401
     )
 
 

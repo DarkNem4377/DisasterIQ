@@ -178,7 +178,9 @@ To train longer on Kaggle, edit `config_subset_kaggle.yaml` epochs before runnin
 | `No module named 'dllogger'` or wrong dllogger | `pip install git+https://github.com/NVIDIA/dllogger.git#egg=dllogger` |
 | `pytorch_lightning.metrics` not found | Pin PL 1.9.5: `pip install pytorch-lightning==1.9.5 torchmetrics` |
 | PL 2.x / `validation_epoch_end` errors | Same — must use **pytorch-lightning==1.9.5** |
-| `AssertionError` in `load_data` (0 images) | Run patches + data layout: `kaggle_train.py --stage prep` or symlinks under `train_subset/train/` |
+| `AssertionError` in `load_data` (0 images) | Run patches + data layout: `kaggle_train.py --stage prep` (creates disjoint train/test holdout under `train_subset/`) |
+| Optimistic val F1 (train≈test) | Delete leaky `train/`+`test/` directory symlinks and re-run `data_layout.py` so holdout pairs are disjoint |
+| `fetch_kaggle_scripts.py` refuses to run | Set `DISASTERIQ_SCRIPTS_REF` to a full 40-char commit SHA (unsigned `main` fetches are blocked) |
 | `FileNotFoundError` for `logs.json` | Results dirs created automatically by `kaggle_train.py` |
 | `Missing localization checkpoint: best.ckpt` | Use `kaggle_train.py --stage dmg` — auto-resolves `last.ckpt` |
 | `ground truth has different shape` (64447×1 vs 64447×4) | Fetch `overrides/model/loss.py` + re-run patches (uses pure PyTorch for damage loss) |

@@ -100,19 +100,11 @@ def run_patches() -> None:
 
 
 def ensure_data_layout(data_root: Path) -> None:
-    if not (data_root / "images").is_dir():
-        raise FileNotFoundError(f"Missing images/ under {data_root}")
-    if (data_root / "train" / "images").exists():
-        return
-    for split in ("train", "test"):
-        split_dir = data_root / split
-        split_dir.mkdir(exist_ok=True)
-        for sub in ("images", "targets", "labels"):
-            src = data_root / sub
-            dst = split_dir / sub
-            if src.is_dir() and not dst.exists():
-                dst.symlink_to(src.resolve(), target_is_directory=True)
-    print(f"xView2 data layout OK under {data_root}")
+    if str(FINETUNE_DIR) not in sys.path:
+        sys.path.insert(0, str(FINETUNE_DIR))
+    from data_layout import ensure_holdout_layout
+
+    ensure_holdout_layout(data_root)
 
 
 def ensure_results_dirs(results_root: Path) -> None:

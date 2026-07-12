@@ -1,6 +1,6 @@
 # Render blueprint for the DisasterIQ backend (FastAPI).
 # Deploy: Render Dashboard -> New -> Blueprint -> connect this repo.
-# The Fireworks key is NOT stored here — set it in the Render dashboard.
+# Secrets (FIREWORKS_API_KEY, ACCESS_TOKEN) are NOT stored here — set them in the dashboard.
 services:
   - type: web
     name: disasteriq-backend
@@ -12,8 +12,9 @@ services:
     # peer, defaulting to 127.0.0.1. Render's proxy is not on loopback, so
     # without this every request reports the proxy's IP as the client and the
     # per-IP rate limiter degrades into one shared bucket for all visitors.
-    # Trusting any peer is safe here because Render never exposes the container
-    # directly — all traffic arrives through its proxy.
+    # Trusting any peer is safe ONLY because Render never exposes the container
+    # directly — all traffic arrives through its proxy. Do not copy this flag
+    # to a bare-metal or self-hosted deploy without pinning real proxy IPs.
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --forwarded-allow-ips "*"
     envVars:
       - key: PYTHON_VERSION
@@ -24,6 +25,23 @@ services:
         value: stub
       - key: FIREWORKS_MODEL
         value: accounts/fireworks/models/gpt-oss-120b
+      - key: DISABLE_OPENAPI_DOCS
+        value: "true"
+      # Tighten after you know the exact Vercel URL (JSON list). Example:
+      # ["https://disasteriq.vercel.app","http://localhost:3000"]
+      - key: CORS_ORIGINS
+        sync: false
+      # Leave CORS_ORIGIN_REGEX empty in production. Only set it for temporary
+      # preview convenience (e.g. https://.*\.vercel\.app) — any matching site
+      # can then call the API cross-origin.
+      - key: RATE_LIMIT_REQUESTS
+        value: "30"
+      - key: RATE_LIMIT_WINDOW_SECONDS
+        value: "60"
       # Set the actual key in the Render dashboard (Environment tab) — never commit it.
       - key: FIREWORKS_API_KEY
+        sync: false
+      # Optional shared secret for /analyze, /brief, /report/pdf.
+      # Enable only behind a server-side BFF/proxy — never put this in the browser.
+      - key: ACCESS_TOKEN
         sync: false
