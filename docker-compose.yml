@@ -8,8 +8,11 @@ services:
       - "8000:8000"
     volumes:
       - ./data/demo:/app/data/demo:ro
-      - ./backend/app/uploads:/app/app/uploads
-      - ./backend/app/outputs:/app/app/outputs
+      # The app writes /app/uploads and /app/outputs (one level above the app
+      # package — see backend/app/config.py). Mounting /app/app/... here left
+      # dead mounts while jobs silently piled up in the container layer.
+      - ./backend/uploads:/app/uploads
+      - ./backend/outputs:/app/outputs
       # docker.sock is NOT mounted by default (host root-equivalent risk).
       # For INFERENCE_MODE=docker locally:
       #   docker compose -f docker-compose.yml -f docker-compose.docker-inference.yml up --build

@@ -44,3 +44,5 @@ ml/xview2-baseline/
 ml/pytorch-xview2/
 ml/checkpoints/*.ckpt
 ml/build_log*.txt
+.smoke_tmp.py
+*.tmp.mjs

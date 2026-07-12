@@ -10,6 +10,7 @@ import ZoneMap from "@/components/ZoneMap";
 import {
   analyzeDemoPair,
   analyzeUpload,
+  API_BASE,
   connectToBackend,
   ConnectionCancelledError,
   demoImageUrl,
@@ -19,6 +20,20 @@ import {
   type DemoPair,
   type HealthResponse,
 } from "@/lib/api";
+
+/*
+  Which backend is this page actually probing? Without this on screen, a local
+  backend can run perfectly while the UI (pointed elsewhere by NEXT_PUBLIC_API_URL
+  or .env.local) reports FRONTEND ONLY — an undiagnosable mystery. One line in
+  the header makes the mismatch visible at a glance.
+*/
+const API_HOST = (() => {
+  try {
+    return new URL(API_BASE).host;
+  } catch {
+    return API_BASE;
+  }
+})();
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 3;
@@ -284,32 +299,57 @@ function DamageStatCard({
   );
 }
 
+type StepState = "waiting" | "processing" | "done";
+
+/*
+  Only stages the frontend can actually observe. This panel used to list six
+  fake steps ("Aligning Images", "Extracting Buildings", …) all driven by one
+  boolean — pure theater, and exactly the kind of overclaiming the rest of the
+  app has been scrubbing out. The backend runs as two calls we can genuinely
+  track: /analyze (inference + zone scoring) and /brief (AI narration).
+*/
 function PipelineStatus({
   loading,
   analysis,
+  briefLoading,
+  brief,
   seconds,
 }: {
   loading: boolean;
   analysis: AnalysisResult | null;
+  briefLoading: boolean;
+  brief: string | null;
   seconds: number | null;
 }) {
-  const steps = [
-    "Uploading Images",
-    "Preprocessing",
-    "Aligning Images",
-    "Extracting Buildings",
-    "Running AI Model",
-    "Generating Report",
-  ];
-
-  // The backend runs as a single call, so steps advance as a group: pending
-  // until a run starts, processing during it, complete once results arrive.
-  const state: "waiting" | "processing" | "done" = loading
+  /*
+    `loading` spans the whole analyze-then-brief run, so it alone cannot tell
+    step 1 from step 2: once the analysis result lands, step 1 is done even
+    though the run (now fetching the brief) is still in flight. runAnalysis
+    clears `analysis` up front, so a stale result can't fake a completed step.
+  */
+  const analysisState: StepState = analysis
+    ? "done"
+    : loading
+      ? "processing"
+      : "waiting";
+  const briefState: StepState = briefLoading
     ? "processing"
-    : analysis
+    : brief
       ? "done"
       : "waiting";
-  const active = state !== "waiting";
+
+  const steps: { label: string; detail: string; state: StepState }[] = [
+    {
+      label: "Damage Analysis",
+      detail: "Inference, zone scoring & georeferencing",
+      state: analysisState,
+    },
+    {
+      label: "AI Situation Brief",
+      detail: "Plain-language summary of the ranked zones",
+      state: briefState,
+    },
+  ];
 
   return (
     <div className="rounded-2xl border border-diq-line/60 bg-slate-950/30 p-4">
@@ -325,13 +365,13 @@ function PipelineStatus({
 
       <div className="mt-4 space-y-3">
         {steps.map((step, index) => (
-          <div key={step} className="relative flex items-start gap-3">
+          <div key={step.label} className="relative flex items-start gap-3">
             {index !== steps.length - 1 && (
               <span
-                className={`absolute left-[11px] top-6 h-5 w-px ${
-                  state === "done"
+                className={`absolute left-[11px] top-6 h-8 w-px ${
+                  step.state === "done"
                     ? "bg-green-400/80"
-                    : state === "processing"
+                    : step.state === "processing"
                       ? "bg-diq-orange/70"
                       : "bg-diq-line/70"
                 }`}
@@ -340,46 +380,46 @@ function PipelineStatus({
 
             <span
               className={`z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[11px] font-bold ${
-                state === "done"
+                step.state === "done"
                   ? "border-green-400 bg-green-950/60 text-green-300"
-                  : state === "processing"
+                  : step.state === "processing"
                     ? "border-diq-orange bg-orange-950/40 text-diq-orange"
                     : "border-diq-line bg-slate-950 text-slate-500"
               }`}
             >
-              {state === "done" ? "✓" : index + 1}
+              {step.state === "done" ? "✓" : index + 1}
             </span>
 
             <div>
               <p
                 className={`text-sm font-semibold ${
-                  active ? "text-slate-100" : "text-slate-500"
+                  step.state !== "waiting" ? "text-slate-100" : "text-slate-500"
                 }`}
               >
-                {step}
+                {step.label}
               </p>
 
               <p
                 className={`text-xs ${
-                  state === "done"
+                  step.state === "done"
                     ? "text-green-400"
-                    : state === "processing"
+                    : step.state === "processing"
                       ? "text-diq-orange"
                       : "text-slate-600"
                 }`}
               >
-                {state === "done"
+                {step.state === "done"
                   ? "Completed"
-                  : state === "processing"
+                  : step.state === "processing"
                     ? "Processing…"
-                    : "Waiting"}
+                    : step.detail}
               </p>
             </div>
           </div>
         ))}
       </div>
 
-      {state === "done" && (
+      {analysisState === "done" && (
         <div className="mt-5 rounded-xl border border-green-500/30 bg-green-950/20 px-4 py-4 text-center">
           <p className="text-sm font-bold text-green-300">
             ✓ Analysis Complete
@@ -765,6 +805,7 @@ export default function HomePage() {
   const runAnalysis = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setAnalysis(null);
     setBrief(null);
     setBriefSource(null);
     setAnalysisSeconds(null);
@@ -800,10 +841,14 @@ export default function HomePage() {
       // Refresh health/pairs in the background after a successful analyze.
       void connect({ budgetMs: 45_000, quiet: true });
 
-      const context =
-        "Pakistan disaster response context: prioritize flood and earthquake damage zones for triage.";
-
-      const briefResp = await fetchBrief(result, context);
+      /*
+        No hardcoded regional context: this used to send "Pakistan disaster
+        response context" with every analysis, so the AI brief narrated
+        Pakistani response priorities over Mexican earthquake imagery. The
+        analysis JSON already carries the pair id and disaster type — let the
+        narrator work from what is actually on screen.
+      */
+      const briefResp = await fetchBrief(result);
       setBrief(briefResp.brief);
       setBriefSource(briefResp.source);
       markOnline();
@@ -972,12 +1017,14 @@ export default function HomePage() {
                         : "Ready"}
                 </span>
 
-                {health && !backendOffline && (
-                  <p className="mt-1.5 whitespace-nowrap text-xs text-slate-500">
-                    {health.inference_mode} · {health.demo_pairs}{" "}
-                    {health.demo_pairs === 1 ? "pair" : "pairs"}
-                  </p>
-                )}
+                <p className="mt-1.5 whitespace-nowrap text-xs text-slate-500">
+                  {health && !backendOffline
+                    ? `${health.inference_mode} · ${health.demo_pairs} ${
+                        health.demo_pairs === 1 ? "pair" : "pairs"
+                      } · `
+                    : "API: "}
+                  <span title={`Backend API: ${API_BASE}`}>{API_HOST}</span>
+                </p>
               </div>
             </div>
 
@@ -1128,6 +1175,8 @@ export default function HomePage() {
               <PipelineStatus
                 loading={loading}
                 analysis={analysis}
+                briefLoading={briefLoading}
+                brief={brief}
                 seconds={analysisSeconds}
               />
             </div>
@@ -1163,9 +1212,17 @@ export default function HomePage() {
                     <EmptyImageState />
                   )}
 
-                  <div className="absolute bottom-4 left-4 z-20 rounded bg-slate-950/80 px-3 py-1.5 text-[11px] text-slate-300">
-                    © Mapbox © OpenStreetMap
-                  </div>
+                  {/*
+                    Only demo pairs get a source credit: they are xBD/xView2
+                    scenes (Maxar Open Data). Uploaded imagery is the user's
+                    own, and the previous hardcoded "© Mapbox © OpenStreetMap"
+                    credited two providers that supply nothing on this panel.
+                  */}
+                  {!preFile && preUrl && (
+                    <div className="absolute bottom-4 left-4 z-20 rounded bg-slate-950/80 px-3 py-1.5 text-[11px] text-slate-300">
+                      Imagery © Maxar Open Data (xBD/xView2)
+                    </div>
+                  )}
 
                   <FullscreenButton targetRef={beforePanelRef} />
                 </div>

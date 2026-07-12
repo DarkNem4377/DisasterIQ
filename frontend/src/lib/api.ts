@@ -96,6 +96,24 @@ const TIMEOUT_DEFAULT_MS = 30_000;
 */
 const TIMEOUT_CONNECT_ATTEMPT_MS = 25_000;
 
+/*
+  AbortSignal.timeout is missing on older browsers (Safari < 16, Chrome < 103).
+  Calling it unconditionally made every fetch throw a TypeError immediately,
+  so the dashboard latched "Frontend Only" forever on those browsers no matter
+  how healthy the backend was. Fall back to a plain AbortController + setTimeout.
+*/
+function timeoutSignal(ms: number): AbortSignal {
+  if (typeof AbortSignal.timeout === "function") {
+    return AbortSignal.timeout(ms);
+  }
+  const controller = new AbortController();
+  setTimeout(
+    () => controller.abort(new DOMException("signal timed out", "TimeoutError")),
+    ms,
+  );
+  return controller.signal;
+}
+
 function mergeAbortSignals(
   ...signals: Array<AbortSignal | undefined>
 ): AbortSignal | undefined {
@@ -156,7 +174,7 @@ export async function fetchHealth(options?: {
   const timeoutMs = options?.timeoutMs ?? TIMEOUT_DEFAULT_MS;
   const res = await fetch(`${API_BASE}/health`, {
     cache: "no-store",
-    signal: mergeAbortSignals(options?.signal, AbortSignal.timeout(timeoutMs)),
+    signal: mergeAbortSignals(options?.signal, timeoutSignal(timeoutMs)),
   });
 
   if (!res.ok) {
@@ -173,7 +191,7 @@ export async function fetchDemoPairs(options?: {
   const timeoutMs = options?.timeoutMs ?? TIMEOUT_DEFAULT_MS;
   const res = await fetch(`${API_BASE}/demo/pairs`, {
     cache: "no-store",
-    signal: mergeAbortSignals(options?.signal, AbortSignal.timeout(timeoutMs)),
+    signal: mergeAbortSignals(options?.signal, timeoutSignal(timeoutMs)),
   });
 
   if (!res.ok) {
@@ -284,7 +302,7 @@ export async function analyzeDemoPair(pairId: string): Promise<AnalysisResult> {
   const res = await fetch(`${API_BASE}/analyze`, {
     method: "POST",
     body: form,
-    signal: AbortSignal.timeout(TIMEOUT_ANALYZE_MS),
+    signal: timeoutSignal(TIMEOUT_ANALYZE_MS),
   });
 
   if (!res.ok) {
@@ -305,7 +323,7 @@ export async function analyzeUpload(
   const res = await fetch(`${API_BASE}/analyze`, {
     method: "POST",
     body: form,
-    signal: AbortSignal.timeout(TIMEOUT_ANALYZE_MS),
+    signal: timeoutSignal(TIMEOUT_ANALYZE_MS),
   });
 
   if (!res.ok) {
@@ -325,7 +343,7 @@ export async function fetchBrief(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ analysis, context }),
-    signal: AbortSignal.timeout(TIMEOUT_BRIEF_MS),
+    signal: timeoutSignal(TIMEOUT_BRIEF_MS),
   });
 
   if (!res.ok) {
@@ -345,7 +363,7 @@ export async function fetchReportPdf(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ analysis, brief }),
-    signal: AbortSignal.timeout(TIMEOUT_DEFAULT_MS),
+    signal: timeoutSignal(TIMEOUT_DEFAULT_MS),
   });
 
   if (!res.ok) {

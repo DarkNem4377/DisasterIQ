@@ -58,14 +58,19 @@ async def _keep_awake(url: str, interval_seconds: int) -> None:
 
     Ping "/" rather than "/health": it touches no filesystem, so the keep-alive
     stays cheap. Failures are expected and survivable (a redeploy, a blip); the
-    only wrong move is letting one kill the task, so keep looping.
+    only wrong move is letting one kill the task, so keep looping. That is also
+    why the except clause is broad: an httpx-only catch let any other error
+    (e.g. a malformed URL) silently kill the task, and the instance resumed
+    sleeping with nothing in the logs to say the pinger was gone.
     """
     async with httpx.AsyncClient(timeout=30.0) as client:
         while True:
             await asyncio.sleep(interval_seconds)
             try:
                 await client.get(f"{url}/", headers={"User-Agent": "disasteriq-keepalive"})
-            except httpx.HTTPError as exc:
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
                 logger.warning("keep-alive ping failed (will retry): %s", exc)
 
 
@@ -308,7 +313,12 @@ async def analyze(
     post_image: UploadFile | None = File(None),
     demo_pair_id: str | None = Form(None),
 ) -> AnalysisResult:
-    cleanup_old_jobs(settings.upload_dir, settings.output_dir)
+    # Disk sweep off the event loop: this handler is async, so anything
+    # blocking here stalls every in-flight request — including the /health
+    # probes the dashboard uses to decide whether the backend is online.
+    await anyio.to_thread.run_sync(
+        cleanup_old_jobs, settings.upload_dir, settings.output_dir
+    )
 
     job_id = uuid.uuid4().hex
     out_dir = settings.output_dir / job_id
@@ -342,8 +352,11 @@ async def analyze(
         pre_path = job_dir / "pre.png"
         post_path = job_dir / "post.png"
 
-        _save_upload(pre_image, pre_path, job_dir)
-        _save_upload(post_image, post_path, job_dir)
+        # Streaming up to two 15 MB files to disk plus PIL validation is
+        # blocking I/O — run it on a worker thread for the same reason as the
+        # cleanup sweep above.
+        await anyio.to_thread.run_sync(_save_upload, pre_image, pre_path, job_dir)
+        await anyio.to_thread.run_sync(_save_upload, post_image, post_path, job_dir)
 
     try:
         return await anyio.to_thread.run_sync(

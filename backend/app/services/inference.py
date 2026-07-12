@@ -91,18 +91,26 @@ def _demo_damage_rank(post_path: Path) -> int:
     return _damaged_pixel_count(str(target), mtime)
 
 
-def _demo_dir_key() -> tuple[tuple[str, float], ...]:
-    """Cache key for the demo listing: each search dir plus its mtime.
+def _demo_dir_key() -> tuple[tuple[str, float, float], ...]:
+    """Cache key for the demo listing: each search dir plus its mtime and the
+    newest PNG mtime inside it.
 
-    A new pair dropped into the folder changes the directory mtime, so the cache
-    below rebuilds itself; nothing else can invalidate it at runtime.
+    A new pair dropped into the folder changes the directory mtime. Overwriting
+    an existing PNG in place does NOT (only add/remove/rename touch a directory
+    mtime), so the key also folds in the newest file mtime — a handful of stat()
+    calls, still nothing like re-decoding the masks the cache exists to avoid.
     """
-    key: list[tuple[str, float]] = []
+    key: list[tuple[str, float, float]] = []
     for images_dir in _demo_search_dirs():
         try:
-            key.append((str(images_dir), images_dir.stat().st_mtime))
+            dir_mtime = images_dir.stat().st_mtime
+            newest = max(
+                (p.stat().st_mtime for p in images_dir.glob("*.png")),
+                default=-1.0,
+            )
+            key.append((str(images_dir), dir_mtime, newest))
         except OSError:
-            key.append((str(images_dir), -1.0))
+            key.append((str(images_dir), -1.0, -1.0))
     return tuple(key)
 
 
@@ -377,6 +385,18 @@ def _run_docker_baseline(pre_image_path: Path, post_image_path: Path, out_dir: P
 
     if not settings.xview2_docker_image:
         raise RuntimeError("xview2_docker_image is not configured")
+
+    # A mounted docker.sock talks to the HOST daemon, which resolves the -v
+    # paths below against the host filesystem — where this container's
+    # /app/... paths do not exist. Docker would silently mount empty dirs and
+    # inference would fail with a baffling "no input" error, so refuse with an
+    # explanation instead. Docker mode is host-run only.
+    if Path("/.dockerenv").exists():
+        raise RuntimeError(
+            "INFERENCE_MODE=docker cannot run from inside a container: the host "
+            "Docker daemon cannot see this container's file paths. Run the "
+            "backend directly on the host for docker inference, or use stub mode."
+        )
 
     run_id = out_dir.name or "job"
 

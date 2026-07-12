@@ -53,16 +53,14 @@ function getPriorityLabel(rank: number) {
   return "Monitor";
 }
 
+/*
+  The backend contract is [x, y, width, height] (see backend/app/schemas.py).
+  This used to guess between that and [x_min, y_min, x_max, y_max] with a
+  magic size threshold — which silently mangles any zone whose width exceeds
+  its x offset. We own both sides of this API; don't guess.
+*/
 function normalizeBbox(bbox: number[]) {
-  const [x, y, third, fourth] = bbox;
-
-  /*
-    Supports both formats:
-    1. [x, y, width, height]
-    2. [x_min, y_min, x_max, y_max]
-  */
-  const width = third > x && third > 80 ? third - x : third;
-  const height = fourth > y && fourth > 80 ? fourth - y : fourth;
+  const [x = 0, y = 0, width = 0, height = 0] = bbox;
 
   return {
     x,
